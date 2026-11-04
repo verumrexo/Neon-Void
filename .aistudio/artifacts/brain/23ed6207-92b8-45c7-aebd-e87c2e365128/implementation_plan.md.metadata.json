@@ -1,0 +1,6 @@
+{
+  "summary": "Revised implementation plan for Neon Void Miner: removed all AI components per user request, refactored flight/mining mechanics so the ship performs smooth perimeter/surface idle mining by default (caves are purely optional player-directed exploration), enhanced upgrade and crafting trees, and refined the Quantum Singularity prestige system.",
+  "updatedAt": "2026-11-04T00:45:38.909120885Z",
+  "requestFeedback": true,
+  "userFacing": true
+}
