@@ -272,6 +272,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           Object.assign(shipRef.current, { x: saved.ship.x, previousX: saved.ship.x,
             y: saved.ship.y, previousY: saved.ship.y,
             orbitRadius: Number.isFinite(saved.ship.orbitRadius) ? saved.ship.orbitRadius : Math.hypot(saved.ship.x - 13, saved.ship.y - 13),
+            workAngle: Number.isFinite(saved.ship.workAngle) ? saved.ship.workAngle : Math.atan2(saved.ship.y - 13, saved.ship.x - 13),
+            lapProgress: Number.isFinite(saved.ship.lapProgress) ? saved.ship.lapProgress : 0,
             hoverAngle: Number.isFinite(saved.ship.hoverAngle) ? saved.ship.hoverAngle : 0 });
         }
 
@@ -317,7 +319,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.setItem(SAVE_KEY, JSON.stringify({
           ...saveStateRef.current,
           world: world.serialize(),
-          ship: { x: shipRef.current.x, y: shipRef.current.y, orbitRadius: shipRef.current.orbitRadius, hoverAngle: shipRef.current.hoverAngle },
+          ship: { x: shipRef.current.x, y: shipRef.current.y, orbitRadius: shipRef.current.orbitRadius, hoverAngle: shipRef.current.hoverAngle, workAngle: shipRef.current.workAngle, lapProgress: shipRef.current.lapProgress },
           lastSaveTime: Date.now(), version: 2, ring: ringEngineRef.current.ring,
         }));
       } catch (error) { console.warn('Failed to auto-save game', error); }
@@ -361,7 +363,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         currentDrones.push({ ...createShip(i + 1),
           x: shipRef.current.x, previousX: shipRef.current.x,
           y: shipRef.current.y, previousY: shipRef.current.y,
-          orbitRadius: shipRef.current.orbitRadius, id: `ship-${i + 1}-${Date.now()}` });
+          orbitRadius: shipRef.current.orbitRadius, workAngle: shipRef.current.workAngle, id: `ship-${i + 1}-${Date.now()}` });
       }
     } else if (currentDrones.length > targetDroneCount) {
       dronesRef.current = currentDrones.slice(0, targetDroneCount);

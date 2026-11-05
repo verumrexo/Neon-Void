@@ -8,6 +8,8 @@ export interface ShipPhysicsState {
   hoverAngle: number;
   orbitRadius: number;
   sensorTimer: number;
+  workAngle: number;
+  lapProgress: number;
   miningTarget: MiningTarget | null;
   miningTargets: MiningTarget[];
   sweepDirection: 1 | -1;
@@ -19,7 +21,7 @@ const CENTER = BLOCK_SIZE / 2;
 export function createShip(index = 0): ShipPhysicsState {
   return { x: 0, y: 0, vx: 0, vy: 0, angle: 0,
     previousX: 0, previousY: 0, previousAngle: 0,
-    hoverAngle: index * 2.39996, orbitRadius: 38, sensorTimer: 0,
+    hoverAngle: index * 2.39996, orbitRadius: 38, sensorTimer: 0, workAngle: -Math.PI * 0.75, lapProgress: 0,
     miningTarget: null, miningTargets: [], sweepDirection: index % 2 === 0 ? 1 : -1 };
 }
 
@@ -44,7 +46,7 @@ export class RingMiningEngine {
       this.moveShip(ship, world, dt, speedMultiplier);
       ship.sensorTimer -= dt;
       const retained = ship.miningTargets.filter(target => !world.isMined(target.gx, target.gy) &&
-        this.inRange(ship, target.gx, target.gy, range) && this.visible(ship, target.gx, target.gy, world));
+        this.inWorkZone(ship, target.gx, target.gy, beams) && this.inRange(ship, target.gx, target.gy, range) && this.visible(ship, target.gx, target.gy, world));
       if (ship.sensorTimer <= 0 || retained.length < ship.miningTargets.length) {
         ship.miningTargets = this.findTargets(ship, world, range, beams, claimed, retained);
         ship.sensorTimer = 0.12;
@@ -61,6 +63,15 @@ export class RingMiningEngine {
     this.ring = Math.max(1, ...ships.map(ship => getRingNumber(
       (Math.hypot(ship.x - CENTER, ship.y - CENTER) + 30) / BLOCK_SIZE, 0)));
     return destroyed;
+  }
+
+  private inWorkZone(ship: ShipPhysicsState, gx: number, gy: number, beams: number) {
+    const radius = Math.hypot(gx, gy) * BLOCK_SIZE;
+    const physicalRadius = Math.hypot(ship.x - CENTER, ship.y - CENTER);
+    const faceRadius = Math.min(ship.orbitRadius, physicalRadius + 8) + 38;
+    const angle = Math.atan2(gy, gx);
+    const offset = Math.atan2(Math.sin(angle - ship.workAngle), Math.cos(angle - ship.workAngle));
+    return radius >= faceRadius - 34 && radius <= faceRadius + (beams > 1 ? 34 : 20) && Math.abs(offset) <= 0.85;
   }
 
   private inRange(ship: ShipPhysicsState, gx: number, gy: number, range: number) {
@@ -88,7 +99,7 @@ export class RingMiningEngine {
     const old = new Set(retained.map(target => `${target.gx},${target.gy}`));
     const candidates: { gx: number; gy: number; score: number }[] = [];
     for (let y = gy - scan; y <= gy + scan; y++) for (let x = gx - scan; x <= gx + scan; x++) {
-      if (!world.isSurfaceBlock(x, y) || !this.inRange(ship, x, y, range)) continue;
+      if (!this.inWorkZone(ship, x, y, count) || !world.isSurfaceBlock(x, y) || !this.inRange(ship, x, y, range)) continue;
       const dx = (x + 0.5) * BLOCK_SIZE - ship.x, dy = (y + 0.5) * BLOCK_SIZE - ship.y;
       const distance = Math.hypot(dx, dy);
       const key = `${x},${y}`;
@@ -124,11 +135,17 @@ export class RingMiningEngine {
     const oldAngle = Math.atan2(ship.y - CENTER, ship.x - CENTER);
     const oldRadius = Math.hypot(ship.x - CENTER, ship.y - CENTER);
     ship.hoverAngle += dt * 1.1;
-    // The next waypoint is always just ahead of the ship, never a fixed ring start.
-    const lead = 0.24 + Math.sin(ship.hoverAngle * 0.73) * 0.055;
-    const nextAngle = oldAngle + ship.sweepDirection * lead;
-    if (!ship.miningTargets.length) ship.orbitRadius += dt * 10 * speed;
-    ship.orbitRadius = Math.max(32, Math.min(ship.orbitRadius, oldRadius + 24));
+    const lag = Math.atan2(Math.sin(ship.workAngle - oldAngle), Math.cos(ship.workAngle - oldAngle)) * ship.sweepDirection;
+    if (lag < 0.55) {
+      const advance = dt * 32 * speed / Math.max(40, ship.orbitRadius);
+      ship.workAngle += ship.sweepDirection * advance;
+      ship.lapProgress += advance;
+      if (ship.lapProgress >= TAU) {
+        ship.lapProgress -= TAU;
+        ship.orbitRadius += BLOCK_SIZE;
+      }
+    }
+    const nextAngle = ship.workAngle + Math.sin(ship.hoverAngle * 0.73) * 0.12;
     const radius = ship.orbitRadius + Math.sin(ship.hoverAngle) * 5 + Math.sin(ship.hoverAngle * 1.71) * 2;
     let goalX = CENTER + Math.cos(nextAngle) * radius;
     let goalY = CENTER + Math.sin(nextAngle) * radius;
@@ -138,7 +155,7 @@ export class RingMiningEngine {
     const tangentX = -Math.sin(oldAngle) * ship.sweepDirection;
     const tangentY = Math.cos(oldAngle) * ship.sweepDirection;
     for (let y = gridY - 5; y <= gridY + 5; y++) for (let x = gridX - 5; x <= gridX + 5; x++) {
-      if (!world.isSurfaceBlock(x, y)) continue;
+      if (!this.inWorkZone(ship, x, y, 1) || !world.isSurfaceBlock(x, y)) continue;
       const wx = (x + 0.5) * BLOCK_SIZE, wy = (y + 0.5) * BLOCK_SIZE;
       const distance = Math.hypot(wx - ship.x, wy - ship.y);
       const score = distance - ((wx - ship.x) * tangentX + (wy - ship.y) * tangentY) / Math.max(1, distance) * 28;
@@ -150,7 +167,7 @@ export class RingMiningEngine {
       const standOff = 30 + Math.sin(ship.hoverAngle * 0.83) * 7;
       goalX = nearest.x + Math.cos(fromRock + sway) * standOff + tangentX * 14;
       goalY = nearest.y + Math.sin(fromRock + sway) * standOff + tangentY * 14;
-      ship.orbitRadius = oldRadius;
+
     }
     const dx = goalX - ship.x;
     const dy = goalY - ship.y;
@@ -169,7 +186,7 @@ export class RingMiningEngine {
     const moved = Math.hypot(ship.x - oldX, ship.y - oldY);
     if (moved < velocity * dt * 0.1) {
       // A jagged corner must not pin a bee to one block: dip inward and keep circling.
-      ship.orbitRadius = Math.max(32, oldRadius - 8);
+
       const remaining = Math.max(0, velocity * dt - moved);
       const escapeX = (-Math.cos(oldAngle) * 0.8 - Math.sin(oldAngle) * ship.sweepDirection * 0.6) * remaining;
       const escapeY = (-Math.sin(oldAngle) * 0.8 + Math.cos(oldAngle) * ship.sweepDirection * 0.6) * remaining;
@@ -177,10 +194,6 @@ export class RingMiningEngine {
       if (this.canOccupy(world, ship.x, ship.y + escapeY)) ship.y += escapeY;
     }
     ship.vx = (ship.x - oldX) / dt; ship.vy = (ship.y - oldY) / dt;
-    const angle = Math.atan2(ship.y - CENTER, ship.x - CENTER);
-    const traveled = Math.atan2(Math.sin(angle - oldAngle), Math.cos(angle - oldAngle)) * ship.sweepDirection;
-    // Spiral outward with actual circular travel, without waiting for all rocks to clear.
-    if (traveled > 0) ship.orbitRadius += traveled * BLOCK_SIZE / TAU;
     const face = Math.hypot(ship.vx, ship.vy) > 1 ? Math.atan2(ship.vy, ship.vx) : ship.angle;
     ship.angle += Math.atan2(Math.sin(face - ship.angle), Math.cos(face - ship.angle)) * Math.min(1, dt * 5.5);
   }
