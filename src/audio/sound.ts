@@ -228,43 +228,6 @@ class SoundEngine {
     }
   }
 
-  /**
-   * Played when floating mineral gem is collected by the ship or drone magnet.
-   * Soft, glistening crystal chime.
-   */
-  public playCollectMineral(tier: number = 1) {
-    if (this.isMuted) return;
-    this.initCtx();
-    if (!this.ctx || !this.masterGain) return;
-
-    try {
-      const now = this.ctx.currentTime;
-      // Throttling to prevent audio overload when multiple crystals are collected at once
-      if (now - this.lastChimeTime < 0.045) return;
-      this.lastChimeTime = now;
-
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-
-      const freqs = [659.25, 783.99, 880.0, 1046.5, 1174.66, 1318.51, 1567.98];
-      const note = freqs[Math.min(freqs.length - 1, tier - 1)] || 880;
-
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(note, now);
-      osc.frequency.exponentialRampToValueAtTime(note * 1.33, now + 0.08);
-
-      gain.gain.setValueAtTime(0.08, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
-
-      osc.connect(gain);
-      gain.connect(this.masterGain);
-
-      osc.start(now);
-      osc.stop(now + 0.12);
-    } catch {
-      // ignore
-    }
-  }
 }
 
 export const sound = new SoundEngine();

@@ -103,3 +103,5 @@ kbd { font: 10px var(--font-mono); opacity: .4; margin-left: 8px; }
   .flight-viewport { padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px)); }
   .system-panel { bottom: calc(56px + env(safe-area-inset-bottom, 0px)); max-height: calc(var(--app-height, 100dvh) - 170px - env(safe-area-inset-bottom, 0px)); }
 }
+
+@media (min-width: 768px) { .flight-viewport [class*="bottom-4"] { bottom: 80px; } }

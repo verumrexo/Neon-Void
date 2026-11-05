@@ -1,6 +1,6 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { useGame } from '../state/gameContext';
-import { BLOCK_SIZE, CHUNK_SIZE } from '../engine/world';
+import { BLOCK_SIZE, CHUNK_SIZE, getRingNumber, getDepthBand, getDepthColor } from '../engine/world';
 import { particleSystem } from '../engine/particles';
 
 export const GameCanvas: React.FC = () => {
@@ -12,10 +12,8 @@ export const GameCanvas: React.FC = () => {
     world,
     ship,
     drones,
-    droppedMinerals,
     craftingItems,
-    setManualTarget,
-    clearManualTarget,
+    ringProgress,
   } = useGame();
 
   // Camera coordinates and zoom (world space)
@@ -25,19 +23,6 @@ export const GameCanvas: React.FC = () => {
     width: typeof window !== 'undefined' ? window.innerWidth : 1200,
     height: typeof window !== 'undefined' ? window.innerHeight : 800,
   });
-
-  const gestureRef = useRef<{ id: number; started: number; x: number; y: number } | null>(null);
-
-  // Keyboard shortcut listener to cancel manual guidance
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === ' ' || e.key === 'c' || e.key === 'C') {
-        clearManualTarget();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [clearManualTarget]);
 
   // Reliable ResizeObserver on container element
   useEffect(() => {
@@ -66,58 +51,6 @@ export const GameCanvas: React.FC = () => {
       window.removeEventListener('resize', updateSize);
     };
   }, []);
-
-  // Convert screen coordinates to world coordinates (with dynamic zoom)
-  const screenToWorld = useCallback(
-    (screenX: number, screenY: number): { x: number; y: number } => {
-      const w = dimensions.width || (canvasRef.current ? canvasRef.current.clientWidth : 800);
-      const h = dimensions.height || (canvasRef.current ? canvasRef.current.clientHeight : 600);
-      const cx = w / 2;
-      const cy = h / 2;
-      const currentZoom = zoomRef.current || 1;
-      return {
-        x: (screenX - cx) / currentZoom + cameraRef.current.x,
-        y: (screenY - cy) / currentZoom + cameraRef.current.y,
-      };
-    },
-    [dimensions]
-  );
-
-  // A short press commits a fixed world destination. A hold steers until release.
-  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (gestureRef.current || e.button !== 0) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    const rect = e.currentTarget.getBoundingClientRect();
-    gestureRef.current = { id: e.pointerId, started: performance.now(), x: e.clientX - rect.left, y: e.clientY - rect.top };
-  };
-  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const gesture = gestureRef.current;
-    if (!gesture || gesture.id !== e.pointerId) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    gesture.x = e.clientX - rect.left;
-    gesture.y = e.clientY - rect.top;
-  };
-  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const gesture = gestureRef.current;
-    if (!gesture || gesture.id !== e.pointerId) return;
-    gestureRef.current = null;
-    if (performance.now() - gesture.started < 220) {
-      const rect = e.currentTarget.getBoundingClientRect();
-      const point = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
-      setManualTarget(point.x, point.y);
-    } else clearManualTarget(true);
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-  };
-  const cancelGesture = () => {
-    if (gestureRef.current) {
-      gestureRef.current = null;
-      clearManualTarget(true);
-    }
-  };
-  useEffect(() => {
-    window.addEventListener('blur', cancelGesture);
-    return () => window.removeEventListener('blur', cancelGesture);
-  });
 
   // Main Canvas Render Loop
   useEffect(() => {
@@ -210,12 +143,6 @@ export const GameCanvas: React.FC = () => {
       const desiredZoom = Math.min(fleetZoom, width / (extentX * 2), height / (extentY * 2));
       zoomRef.current = Math.min(desiredZoom, zoomRef.current + (desiredZoom - zoomRef.current) * 0.05);
       const zoom = zoomRef.current;
-      const gesture = gestureRef.current;
-      if (gesture && performance.now() - gesture.started >= 220) {
-        const point = screenToWorld(gesture.x, gesture.y);
-        setManualTarget(point.x, point.y, 'destination');
-      }
-
       const camX = cameraRef.current.x;
       const camY = cameraRef.current.y;
       const halfW = width / 2;
@@ -276,14 +203,16 @@ export const GameCanvas: React.FC = () => {
         for (let gx = cx * CHUNK_SIZE; gx < (cx + 1) * CHUNK_SIZE; gx++) {
           if (world.isMined(gx, gy)) continue;
 
-          const block = world.getBlock(gx, gy, 0);
+          const block = world.getBlock(gx, gy);
           if (!block) continue;
 
           const bx = gx * BLOCK_SIZE;
           const by = gy * BLOCK_SIZE;
           const isSurface = world.isSurfaceBlock(gx, gy);
 
-          const tileKey = `${block.type}:${isSurface}`;
+          const ring = getRingNumber(gx, gy);
+          const band = getDepthBand(ring);
+          const tileKey = `${block.type}:${isSurface}:${band}`;
           let tile = tiles.get(tileKey);
           if (!tile) {
             tile = document.createElement('canvas');
@@ -391,6 +320,15 @@ export const GameCanvas: React.FC = () => {
             ctx.fillRect(cx - 1, cy - 1, 2, 2);
           }
 
+            // The rock strata change independently of the ore's identifying color.
+            ctx.strokeStyle = getDepthColor(ring);
+            ctx.lineWidth = 1;
+            ctx.strokeRect(2.5, 2.5, BLOCK_SIZE - 6, BLOCK_SIZE - 6);
+            if (band > 0) {
+              ctx.fillStyle = getDepthColor(ring);
+              const marks = Math.min(4, 1 + Math.floor(band / 6));
+              for (let mark = 0; mark < marks; mark++) ctx.fillRect(4 + mark * 3, 4, 1, 3);
+            }
             tiles.set(tileKey, tile);
           }
           ctx.drawImage(tile, bx - 12, by - 12);
@@ -461,82 +399,8 @@ export const GameCanvas: React.FC = () => {
         ctx.restore();
       });
 
-      // 4. Draw Physical Dropped Minerals Floating in Caverns
-      droppedMinerals.forEach((min) => {
-        ctx.save();
-        ctx.translate(min.x, min.y);
-        ctx.rotate(min.rotation);
-
-        ctx.shadowColor = min.glow;
-        ctx.shadowBlur = 0;
-
-        // Gem faceted diamond hull
-        ctx.strokeStyle = min.color;
-        ctx.fillStyle = '#080d16';
-        ctx.lineWidth = 1.2;
-
-        ctx.beginPath();
-        ctx.moveTo(0, -6.5);
-        ctx.lineTo(5.5, 0);
-        ctx.lineTo(0, 6.5);
-        ctx.lineTo(-5.5, 0);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-
-        // Inner sparkling core
-        ctx.fillStyle = min.color;
-        ctx.fillRect(-1.5, -1.5, 3, 3);
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(-0.5, -0.5, 1, 1);
-
-        ctx.restore();
-      });
-
       // 5. Draw Particles and Floating Numbers
       particleSystem.render(ctx);
-
-      // 6. Draw Directional Course Vector (Heading in chosen direction until it hits a block)
-      if (ship.isManualGuided && ship.guidedAngle !== null) {
-        ctx.save();
-        const rayLen = 75;
-        const startX = validShipX + Math.cos(ship.guidedAngle) * 14;
-        const startY = validShipY + Math.sin(ship.guidedAngle) * 14;
-        const endX = ship.navigationMode === 'heading' ? validShipX + Math.cos(ship.guidedAngle) * rayLen : ship.targetX ?? validShipX;
-        const endY = ship.navigationMode === 'heading' ? validShipY + Math.sin(ship.guidedAngle) * rayLen : ship.targetY ?? validShipY;
-
-        // Glowing trajectory line
-        ctx.setLineDash([5, 4]);
-        ctx.lineDashOffset = -Date.now() * 0.04;
-        ctx.strokeStyle = '#00f0ff';
-        ctx.shadowColor = 'rgba(0, 240, 255, 0.85)';
-        ctx.shadowBlur = 0;
-        ctx.lineWidth = 1.6;
-
-        ctx.beginPath();
-        ctx.moveTo(startX, startY);
-        ctx.lineTo(endX, endY);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // Directional arrow chevron at the end
-        const headAngle = ship.guidedAngle;
-        const headSize = 7;
-        ctx.beginPath();
-        ctx.moveTo(endX, endY);
-        ctx.lineTo(
-          endX - Math.cos(headAngle - 0.5) * headSize,
-          endY - Math.sin(headAngle - 0.5) * headSize
-        );
-        ctx.lineTo(
-          endX - Math.cos(headAngle + 0.5) * headSize,
-          endY - Math.sin(headAngle + 0.5) * headSize
-        );
-        ctx.closePath();
-        ctx.fillStyle = '#00f0ff';
-        ctx.fill();
-        ctx.restore();
-      }
 
       // Spawn soft thruster embers behind the ship while moving
       if (Math.hypot(ship.vx, ship.vy) > 12 && Math.random() > 0.4) {
@@ -631,18 +495,18 @@ export const GameCanvas: React.FC = () => {
 
     animId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animId);
-  }, [dimensions, ship, drones, droppedMinerals, world, craftingItems]);
+  }, [dimensions, ship, drones, world, craftingItems]);
 
   return (
-    <div ref={containerRef} className="relative w-full h-full min-h-[300px] overflow-hidden cursor-crosshair">
+    <div ref={containerRef} className="relative w-full h-full min-h-[300px] overflow-hidden">
       <div ref={fpsRef} className="absolute top-5 right-6 z-10 pointer-events-none text-[10px] font-mono text-white/50 tabular-nums" aria-label="Frames per second">measuring fps</div>
+      <div className="absolute left-4 bottom-4 z-10 pointer-events-none rounded-lg border border-white/10 bg-[#090d15]/90 px-3 py-2 text-[11px] font-mono">
+        <span className="text-[#00f0ff]">ring {ringProgress.ring}</span>
+        <span className="text-white/50"> · {Math.max(0, ringProgress.total - ringProgress.remaining)}/{ringProgress.total} cleared</span>
+        <div className="mt-1 text-[10px] text-white/40">stratum {getDepthBand(ringProgress.ring) + 1} · {Math.pow(1.2, getDepthBand(ringProgress.ring)).toFixed(2)}× rock hp · +20% / 5 rings</div>
+      </div>
       <canvas
         ref={canvasRef}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={cancelGesture}
-        onLostPointerCapture={cancelGesture}
         className="w-full h-full block touch-none"
       />
     </div>

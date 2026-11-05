@@ -87,23 +87,6 @@ export interface BlockData {
   mined?: boolean;
 }
 
-export interface DroppedMineral {
-  id: string;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  type: ResourceType;
-  amount: number;
-  color: string;
-  glow: string;
-  symbol: string;
-  life: number;
-  maxLife: number;
-  rotation: number;
-  rotationSpeed: number;
-}
-
 export interface FleetShip extends ShipPhysicsState {
   id: string;
 }
@@ -138,7 +121,6 @@ export interface UpgradesState {
   fireRate: number;
   laserRange: number;
   beamCount: number;
-  collectorMagnet: number;
   flightSpeed: number;
   droneBay: number;
 }

@@ -93,7 +93,7 @@ export class ParticleSystem {
   /**
    * Updates all particles and floating text.
    */
-  public update(dt: number, shipX: number, shipY: number, magnetRadius: number) {
+  public update(dt: number) {
     // 1. Update particles
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
@@ -101,16 +101,6 @@ export class ParticleSystem {
       if (p.life >= p.maxLife) {
         this.particles.splice(i, 1);
         continue;
-      }
-
-      // Magnet pull toward ship if within collection radius
-      const dx = shipX - p.x;
-      const dy = shipY - p.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < magnetRadius && dist > 1) {
-        const pull = 300 * (1 - dist / magnetRadius);
-        p.vx += (dx / dist) * pull * dt;
-        p.vy += (dy / dist) * pull * dt;
       }
 
       p.vx *= 0.92;

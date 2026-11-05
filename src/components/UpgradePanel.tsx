@@ -1,7 +1,7 @@
 import React from 'react';
 import { useGame } from '../state/gameContext';
 import { UpgradesState, RESOURCE_DEFINITIONS } from '../types/game';
-import { Zap, Flame, Crosshair, GitFork, Magnet, Wind, Cpu } from 'lucide-react';
+import { Zap, Flame, Crosshair, GitFork, Wind, Cpu } from 'lucide-react';
 
 interface UpgradeCardData {
   key: keyof UpgradesState;
@@ -34,8 +34,8 @@ const UPGRADE_CONFIGS: UpgradeCardData[] = [
     title: 'Focus Standoff Collimator',
     description: 'Extends the operational mining reach from the ship to the asteroid face.',
     icon: Crosshair,
-    getCurrentValue: (lvl) => `${95 + (lvl - 1) * 18} px`,
-    getNextValue: (lvl) => `${95 + lvl * 18} px`,
+    getCurrentValue: (lvl) => `${100 + (lvl - 1) * 20} px`,
+    getNextValue: (lvl) => `${100 + lvl * 20} px`,
   },
   {
     key: 'beamCount',
@@ -46,20 +46,12 @@ const UPGRADE_CONFIGS: UpgradeCardData[] = [
     getNextValue: (lvl) => `${lvl + 1} beams`,
   },
   {
-    key: 'collectorMagnet',
-    title: 'Graviton Vacuum Radius',
-    description: 'Expands the electromagnetic aura that vacuums minerals into the cargo bay.',
-    icon: Magnet,
-    getCurrentValue: (lvl) => `${80 + (lvl - 1) * 25} px`,
-    getNextValue: (lvl) => `${80 + lvl * 25} px`,
-  },
-  {
     key: 'flightSpeed',
     title: 'Sub-Light Thrusters',
     description: 'Calibrates gentle cruising thrusters to reach distant deep-core crystal clusters.',
     icon: Wind,
-    getCurrentValue: (lvl) => `${Math.round(34 * (1 + (lvl - 1) * 0.12))} px/s`,
-    getNextValue: (lvl) => `${Math.round(34 * (1 + lvl * 0.12))} px/s`,
+    getCurrentValue: (lvl) => `${Math.round(58 * (1 + (lvl - 1) * 0.12))} px/s`,
+    getNextValue: (lvl) => `${Math.round(58 * (1 + lvl * 0.12))} px/s`,
   },
   {
     key: 'droneBay',
@@ -67,7 +59,7 @@ const UPGRADE_CONFIGS: UpgradeCardData[] = [
     description: 'Builds another full-size ship sharing your mining and movement upgrades.',
     icon: Cpu,
     getCurrentValue: (lvl) => `${lvl} additional ship${lvl === 1 ? '' : 's'}`,
-    getNextValue: (lvl) => `${lvl + 1} additional ships`,
+    getNextValue: (lvl) => `${lvl + 1} additional ship${lvl === 0 ? "" : "s"}`,
   },
 ];
 
@@ -82,7 +74,7 @@ export const UpgradePanel: React.FC = () => {
             Ship System Upgrades
           </h2>
           <p className="text-xs text-white/50">
-            Increase laser power, split beams across multiple targets, expand magnet collection, and expand your mining fleet.
+            Increase laser power, split beams across multiple targets, automatically collect every mineral, and expand your mining fleet.
           </p>
         </div>
       </div>

@@ -8,10 +8,9 @@ import {
   GameStats,
   BlockData,
   FleetShip,
-  DroppedMineral,
 } from '../types/game';
-import { AsteroidWorld, BLOCK_SIZE } from '../engine/world';
-import { physics, ShipPhysicsState } from '../engine/physics';
+import { AsteroidWorld, BLOCK_SIZE, getRingHardness } from '../engine/world';
+import { RingMiningEngine, createShip, ShipPhysicsState } from '../engine/physics';
 import { particleSystem } from '../engine/particles';
 import { sound } from '../audio/sound';
 
@@ -147,17 +146,6 @@ export const INITIAL_QUANTUM_PERKS: QuantumPerk[] = [
     branch: 'cosmic',
   },
   {
-    id: 'singularity_vacuum',
-    name: 'Singularity Vacuum',
-    description: 'Mined minerals are instantly drawn from across the entire sector.',
-    cost: 12,
-    costMultiplier: 1.0,
-    level: 0,
-    maxLevel: 1,
-    iconName: 'Radio',
-    branch: 'automation',
-  },
-  {
     id: 'cosmic_multiplier',
     name: 'Cosmic Abundance',
     description: '+50% bonus resources yielded from every destroyed asteroid block.',
@@ -178,11 +166,10 @@ interface GameContextType {
   stats: GameStats;
   ship: ShipPhysicsState;
   drones: FleetShip[];
-  droppedMinerals: DroppedMineral[];
   world: AsteroidWorld;
   currentDps: number;
   availableStardustOnPrestige: number;
-  hasManualTarget: boolean;
+  ringProgress: { ring: number; remaining: number; total: number };
   offlineEarnings: { seconds: number; minerals: Partial<Record<ResourceType, number>> } | null;
   clearOfflineNotification: () => void;
   buyUpgrade: (type: keyof UpgradesState) => boolean;
@@ -191,8 +178,7 @@ interface GameContextType {
   buyQuantumPerk: (perkId: string) => boolean;
   triggerQuantumSingularity: () => void;
   resetAllProgress: () => void;
-  setManualTarget: (worldX: number, worldY: number, mode?: 'destination' | 'heading') => void;
-  clearManualTarget: (resume?: boolean) => void;
+
 }
 
 const GameContext = createContext<GameContextType | null>(null);
@@ -203,27 +189,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const world = worldRef.current;
 
   // Ship physics state
-  const shipRef = useRef<ShipPhysicsState>({
-    x: 0,
-    y: 0,
-    vx: 0,
-    vy: 0,
-    angle: 0,
-    targetX: null,
-    targetY: null,
-    guidedAngle: null,
-    isManualGuided: false,
-    wanderAngle: 0,
-    wanderTimer: 0,
-    hoverAngle: 0,
-    miningTarget: null,
-    miningTargets: [],
-  });
-
+  const shipRef = useRef<ShipPhysicsState>(createShip());
   const dronesRef = useRef<FleetShip[]>([]);
-  const droppedMineralsRef = useRef<DroppedMineral[]>([]);
-  const lockedTargetsRef = useRef<{ gx: number; gy: number }[]>([]);
-  const [hasManualTarget, setHasManualTarget] = useState<boolean>(false);
+  const ringEngineRef = useRef(new RingMiningEngine());
+  const [ringProgress, setRingProgress] = useState({ ring: 1, remaining: 0, total: 0 });
 
   // React state for UI rendering
   const [resources, setResources] = useState<Record<ResourceType, number>>({
@@ -241,7 +210,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     fireRate: 1,
     laserRange: 1,
     beamCount: 1,
-    collectorMagnet: 1,
     flightSpeed: 1,
     droneBay: 0,
   });
@@ -278,32 +246,28 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const raw = localStorage.getItem(SAVE_KEY);
       if (raw) {
         const saved = JSON.parse(raw);
+        // Migrate removed collection purchases once, keeping their original currencies.
+        if (saved.version !== 2) {
+          const pickupLevel = saved.upgrades?.collectorMagnet || 1;
+          let ironRefund = 0;
+          for (let level = 1; level < Math.min(1000, pickupLevel); level++) ironRefund += Math.floor(25 * Math.pow(1.42, level - 1));
+          const vacuumLevel = saved.quantumPerks?.find((perk: QuantumPerk) => perk.id === 'singularity_vacuum')?.level || 0;
+          if (saved.resources) {
+            saved.resources.iron = (saved.resources.iron || 0) + ironRefund;
+            saved.resources.stardust = (saved.resources.stardust || 0) + vacuumLevel * 12;
+          }
+          if (saved.upgrades) delete saved.upgrades.collectorMagnet;
+          if (saved.quantumPerks) saved.quantumPerks = saved.quantumPerks.filter((perk: QuantumPerk) => perk.id !== 'singularity_vacuum');
+          saved.version = 2;
+          localStorage.setItem(SAVE_KEY, JSON.stringify(saved));
+        }
         if (saved.resources) setResources(saved.resources);
-        if (saved.upgrades) setUpgrades(saved.upgrades);
+        if (saved.upgrades) setUpgrades(previous => ({ ...previous, ...saved.upgrades }));
         if (saved.craftingItems) setCraftingItems(INITIAL_CRAFTING_ITEMS.map(item => ({ ...item, crafted: saved.craftingItems.some((old: CraftingItem) => old.id === item.id && old.crafted) })));
         if (saved.quantumPerks) setQuantumPerks(INITIAL_QUANTUM_PERKS.map(perk => ({ ...perk, level: saved.quantumPerks.find((old: QuantumPerk) => old.id === perk.id)?.level || 0 })));
         if (saved.stats) setStats(saved.stats);
         if (saved.world) world.deserialize(saved.world);
-        if (
-          saved.ship &&
-          typeof saved.ship.x === 'number' &&
-          typeof saved.ship.y === 'number' &&
-          isFinite(saved.ship.x) &&
-          isFinite(saved.ship.y)
-        ) {
-          if (Math.hypot(saved.ship.x, saved.ship.y) > 2500) {
-            shipRef.current.x = 0;
-            shipRef.current.y = 0;
-          } else {
-            shipRef.current.x = saved.ship.x;
-            shipRef.current.y = saved.ship.y;
-          }
-        } else {
-          shipRef.current.x = 0;
-          shipRef.current.y = 0;
-        }
-        shipRef.current.vx = 0;
-        shipRef.current.vy = 0;
+        Object.assign(shipRef.current, createShip());
 
         // Offline progress calculation
         if (saved.lastSaveTime) {
@@ -311,7 +275,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (elapsedSeconds > 15) {
             // Calculate base offline mining rate
             const baseDps = calculateDps(saved.upgrades, saved.craftingItems, saved.quantumPerks);
-            const blocksDestroyedOffline = Math.floor(elapsedSeconds * 0.45 * (baseDps / 20));
+            const blocksDestroyedOffline = Math.floor(elapsedSeconds * 0.45 * (baseDps / 20) / getRingHardness(saved.ring || 1));
             if (blocksDestroyedOffline > 0) {
               const gainedBasalt = Math.floor(blocksDestroyedOffline * 1.5);
               const gainedIron = Math.floor(blocksDestroyedOffline * 0.35);
@@ -350,6 +314,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           world: world.serialize(),
           ship: { x: shipRef.current.x, y: shipRef.current.y },
           lastSaveTime: Date.now(),
+          version: 2,
+          ring: ringEngineRef.current.ring,
         };
         localStorage.setItem(SAVE_KEY, JSON.stringify(stateToSave));
       } catch (e) {
@@ -378,19 +344,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const currentDrones = dronesRef.current;
     if (currentDrones.length < targetDroneCount) {
       for (let i = currentDrones.length; i < targetDroneCount; i++) {
-        currentDrones.push({
-          id: `drone-${i}-${Date.now()}`,
-          x: shipRef.current.x,
-          y: shipRef.current.y,
-          vx: 0,
-          vy: 0,
-          angle: (i * 1.5) % (Math.PI * 2),
-          targetX: null, targetY: null, guidedAngle: null, isManualGuided: false,
-          miningTarget: null, miningTargets: [],
-          wanderAngle: (i * 1.5) % (Math.PI * 2),
-          wanderTimer: 1.0 + Math.random(),
-          hoverAngle: Math.random() * Math.PI * 2,
-        });
+        currentDrones.push({ ...createShip(i + 1), id: `ship-${i + 1}-${Date.now()}` });
       }
     } else if (currentDrones.length > targetDroneCount) {
       dronesRef.current = currentDrones.slice(0, targetDroneCount);
@@ -425,8 +379,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { resource: 'basalt', amount: Math.floor(35 * Math.pow(1.44, lvl - 1)) };
       case 'beamCount':
         return { resource: 'quartz', amount: Math.floor(40 * Math.pow(2.7, lvl - 1)) };
-      case 'collectorMagnet':
-        return { resource: 'iron', amount: Math.floor(25 * Math.pow(1.42, lvl - 1)) };
       case 'flightSpeed':
         return { resource: 'basalt', amount: Math.floor(30 * Math.pow(1.40, lvl - 1)) };
       case 'droneBay':
@@ -504,25 +456,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     sound.playSingularity();
     const stardustGained = availableStardustOnPrestige;
 
-    // Preserve permanent drones from perk
-    const permanentDrones = quantumPerks.find((p) => p.id === 'drone_matrix')?.level || 0;
-
     // Reset local sector
     world.createSpawnClearing();
-    shipRef.current.x = 0;
-    shipRef.current.y = 0;
-    shipRef.current.vx = 0;
-    shipRef.current.vy = 0;
-    shipRef.current.targetX = null;
-    shipRef.current.targetY = null;
-    shipRef.current.guidedAngle = null;
-    shipRef.current.isManualGuided = false;
-    shipRef.current.miningTarget = null;
-    shipRef.current.miningTargets = [];
-    lockedTargetsRef.current = [];
-    droppedMineralsRef.current = [];
-    setHasManualTarget(false);
-
+    Object.assign(shipRef.current, createShip());
+    dronesRef.current.forEach((ship, index) => Object.assign(ship, createShip(index + 1)));
+    ringEngineRef.current.reset();
+    setRingProgress({ ring: 1, remaining: 0, total: 0 });
     particleSystem.clear();
 
     // Reset resources and add gained stardust
@@ -542,9 +481,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       fireRate: 1,
       laserRange: 1,
       beamCount: 1,
-      collectorMagnet: 1,
       flightSpeed: 1,
-      droneBay: permanentDrones,
+      droneBay: 0,
     });
 
     // Reset uncrafted gear
@@ -564,13 +502,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const resetAllProgress = () => {
     localStorage.removeItem(SAVE_KEY);
     world.createSpawnClearing();
-    shipRef.current.x = 0;
-    shipRef.current.y = 0;
-    shipRef.current.miningTarget = null;
-    shipRef.current.miningTargets = [];
-    lockedTargetsRef.current = [];
-    droppedMineralsRef.current = [];
-    setHasManualTarget(false);
+    Object.assign(shipRef.current, createShip());
+    dronesRef.current.forEach((ship, index) => Object.assign(ship, createShip(index + 1)));
+    ringEngineRef.current.reset();
+    setRingProgress({ ring: 1, remaining: 0, total: 0 });
+    particleSystem.clear();
     setResources({
       basalt: 0,
       iron: 0,
@@ -585,7 +521,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       fireRate: 1,
       laserRange: 1,
       beamCount: 1,
-      collectorMagnet: 1,
       flightSpeed: 1,
       droneBay: 0,
     });
@@ -610,320 +545,92 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const setManualTarget = (worldX: number, worldY: number, mode: 'destination' | 'heading' = 'destination') => {
-    [shipRef.current, ...dronesRef.current].forEach(ship => {
-      ship.targetX = worldX;
-      ship.targetY = worldY;
-      ship.guidedAngle = Math.atan2(worldY - ship.y, worldX - ship.x);
-      ship.navigationMode = mode;
-      ship.parked = false;
-      ship.isManualGuided = true;
-    });
-    setHasManualTarget(true);
-  };
-
-  const clearManualTarget = (resume = false) => {
-    [shipRef.current, ...dronesRef.current].forEach(ship => {
-      ship.targetX = ship.targetY = ship.guidedAngle = null;
-      ship.isManualGuided = false;
-      ship.parked = !resume;
-      ship.vx = ship.vy = 0;
-    });
-    setHasManualTarget(false);
-  };
-
-  // Main high-rate game simulation loop
+  // One controller owns fleet assignments and ring completion. UI updates are batched.
   useEffect(() => {
     let lastTime = performance.now();
-    let animationFrameId: number;
-
-    const gameLoop = (now: number) => {
+    let frame = 0;
+    let pending = 0;
+    let uiTimer = 0;
+    let sectorEpoch = world.terrainEpoch;
+    const gains = {} as Partial<Record<ResourceType, number>>;
+    let destroyedCount = 0;
+    let deepest = 0;
+    let damage = 0;
+    const flush = () => {
+      if (sectorEpoch !== world.terrainEpoch) return;
+      if (destroyedCount || damage) {
+        const credited = { ...gains };
+        const count = destroyedCount, depth = deepest, dealt = damage;
+        setResources(previous => {
+          const result = { ...previous };
+          for (const [type, amount] of Object.entries(credited)) result[type as ResourceType] += amount!;
+          return result;
+        });
+        setStats(previous => {
+          const lifetimeResources = { ...previous.lifetimeResources };
+          for (const [type, amount] of Object.entries(credited)) lifetimeResources[type as ResourceType] += amount!;
+          return { ...previous, lifetimeResources,
+            totalBlocksDestroyed: previous.totalBlocksDestroyed + count,
+            blocksDestroyedThisRun: previous.blocksDestroyedThisRun + count,
+            totalDamageDealt: previous.totalDamageDealt + dealt,
+            maxDepthReached: Math.max(previous.maxDepthReached, depth) };
+        });
+        for (const key of Object.keys(gains)) delete gains[key as ResourceType];
+        destroyedCount = damage = deepest = 0;
+      }
+      const engine = ringEngineRef.current;
+      setRingProgress(previous => previous.ring === engine.ring && previous.remaining === engine.remaining && previous.total === engine.total
+        ? previous : { ring: engine.ring, remaining: engine.remaining, total: engine.total });
+    };
+    const tick = (now: number) => {
       const dt = Math.min(0.1, (now - lastTime) / 1000);
       lastTime = now;
-
-      const ship = shipRef.current;
-      const fleet = [ship, ...dronesRef.current];
-      const fleetCenter = fleet.length > 1 ? {
-        x: fleet.reduce((sum, member) => sum + member.x, 0) / fleet.length,
-        y: fleet.reduce((sum, member) => sum + member.y, 0) / fleet.length,
-      } : undefined;
-      const rareBoost = getRareBoost(craftingItems, quantumPerks);
-
-      // Check if ship reached manual destination and cleared it
-      if (!ship.isManualGuided) {
-        setHasManualTarget(false);
-      }
-
-      // 1. Calculate calm speed multiplier
-      let speedMult = 1 + (upgrades.flightSpeed - 1) * 0.12;
-      craftingItems.forEach((c) => {
-        if (c.crafted && c.statBonus.speedBoost) speedMult *= c.statBonus.speedBoost;
-      });
-
-      // 2. Beam parameters
-      let maxBeams = upgrades.beamCount;
-      craftingItems.forEach((c) => {
-        if (c.crafted && c.statBonus.extraBeams) maxBeams += c.statBonus.extraBeams;
-      });
-      const multiPerk = quantumPerks.find((p) => p.id === 'multi_beam_mastery');
-      if (multiPerk) maxBeams += multiPerk.level;
-
-      const rangePx = 100 + (upgrades.laserRange - 1) * 20;
-      const baseDps = calculateDps(upgrades, craftingItems, quantumPerks);
-
-      // 1. MULTI-TARGET BEAM SPLITTER LOCKING
-      // Filters destroyed or out-of-range targets, then fills remaining beam slots with new distinct targets
-      const currentLocked = lockedTargetsRef.current.filter((t) => {
-        if (world.isMined(t.gx, t.gy)) return false;
-        const bx = t.gx * BLOCK_SIZE + BLOCK_SIZE / 2;
-        const by = t.gy * BLOCK_SIZE + BLOCK_SIZE / 2;
-        return Math.hypot(bx - ship.x, by - ship.y) <= rangePx + 40;
-      });
-
-      const neededTargets = maxBeams - currentLocked.length;
-      if (neededTargets > 0) {
-        const excludeKeys = new Set(currentLocked.map((t) => `${t.gx},${t.gy}`));
-        const preferredDir =
-          ship.isManualGuided && ship.guidedAngle !== null
-            ? { x: ship.x + Math.cos(ship.guidedAngle) * 100, y: ship.y + Math.sin(ship.guidedAngle) * 100 }
-            : null;
-
-        const newFound = world.findMultipleMiningTargets(
-          ship.x,
-          ship.y,
-          rangePx,
-          neededTargets,
-          excludeKeys,
-          preferredDir,
-          rareBoost
-        );
-
-        newFound.forEach((f) => currentLocked.push({ gx: f.gx, gy: f.gy }));
-      }
-      lockedTargetsRef.current = currentLocked;
-
-      // Build active mining targets array
-      const activeTargets: { gx: number; gy: number; color: string; glow: string; block: BlockData }[] = [];
-      currentLocked.forEach((t) => {
-        const block = world.getBlock(t.gx, t.gy, rareBoost);
-        if (block) {
-          activeTargets.push({
-            gx: t.gx,
-            gy: t.gy,
-            color: block.color,
-            glow: block.glow,
-            block,
-          });
+      pending += dt; uiTimer += dt;
+      // Fixed 30 Hz mining simulation; the canvas continues rendering at display refresh rate.
+      if (pending >= 1 / 30) {
+        const step = pending; pending = 0;
+        const rareBoost = getRareBoost(craftingItems, quantumPerks);
+        if (world.rareBoost !== rareBoost) { world.rareBoost = rareBoost; world.terrainEpoch++; }
+        sectorEpoch = world.terrainEpoch;
+        let speed = 1 + (upgrades.flightSpeed - 1) * 0.12;
+        let beams = upgrades.beamCount + (quantumPerks.find(perk => perk.id === 'multi_beam_mastery')?.level || 0);
+        let range = 100 + (upgrades.laserRange - 1) * 20;
+        for (const item of craftingItems) if (item.crafted) {
+          speed *= item.statBonus.speedBoost || 1;
+          beams += item.statBonus.extraBeams || 0;
+          range += item.statBonus.rangeBoost || 0;
         }
-      });
-
-      // Sync ship mining targets
-      ship.miningTargets = activeTargets.map((t) => ({
-        gx: t.gx,
-        gy: t.gy,
-        color: t.color,
-        glow: t.glow,
-      }));
-      ship.miningTarget = ship.miningTargets[0] || null;
-
-      // Update ship physics with calm bumblebee flight near primary target
-      const primaryTarget = activeTargets[0] || null;
-      physics.updateShip(
-        ship,
-        world,
-        dt,
-        primaryTarget ? { gx: primaryTarget.gx, gy: primaryTarget.gy } : null,
-        speedMult, fleetCenter
-      );
-
-      // 2. FIRE MINING LASERS AT ALL ACTIVE TARGETS SIMULTANEOUSLY
-      if (activeTargets.length > 0) {
-        sound.playLaserHit();
-        // Distribute damage across split beams while scaling nicely with extra beams
-        const beamDps = baseDps / Math.max(1, activeTargets.length * 0.75);
-
-        activeTargets.forEach((target) => {
-          const blockWorldX = target.gx * BLOCK_SIZE + BLOCK_SIZE / 2;
-          const blockWorldY = target.gy * BLOCK_SIZE + BLOCK_SIZE / 2;
-
-          // Spark emission at block impact site
-          particleSystem.spawnLaserHitSparks(blockWorldX, blockWorldY, target.color, target.glow, 1);
-
-          // Apply beam damage
-          const res = world.damageBlock(target.gx, target.gy, beamDps * dt, rareBoost);
-          if (res.destroyed) {
-            // Remove destroyed target from locked list
-            lockedTargetsRef.current = lockedTargetsRef.current.filter(
-              (lt) => !(lt.gx === target.gx && lt.gy === target.gy)
-            );
-            handleBlockDestroyed(res.block, blockWorldX, blockWorldY, quantumPerks);
-          }
-        });
-      }
-
-      // 3. UPDATE AUTONOMOUS COMPANION DRONES (MINI-SHIPS)
-      const droneDps = baseDps;
-      const shipLockedKeys = new Set(lockedTargetsRef.current.map((t) => `${t.gx},${t.gy}`));
-      const droneUpdate = physics.updateFleet(
-        dronesRef.current,
-        world,
-        dt,
-        rareBoost,
-        droneDps, rangePx, maxBeams, speedMult,
-        shipLockedKeys, fleetCenter
-      );
-      droneUpdate.destroyedBlocks.forEach((d) => {
-        const bx = d.gx * BLOCK_SIZE + BLOCK_SIZE / 2;
-        const by = d.gy * BLOCK_SIZE + BLOCK_SIZE / 2;
-        handleBlockDestroyed(d.block, bx, by, quantumPerks);
-      });
-
-      // 4. UPDATE PHYSICAL DROPPED MINERALS & MAGNET ATTRACTION
-      let magnetRadius = 45 + (upgrades.collectorMagnet - 1) * 35;
-      const vacuumPerk = quantumPerks.find((p) => p.id === 'singularity_vacuum');
-      const vacuumActive = Boolean(vacuumPerk && vacuumPerk.level > 0);
-      if (vacuumActive) {
-        magnetRadius = 1800; // Screen-wide gravitational vacuum
-      }
-
-      const activeMinerals = droppedMineralsRef.current;
-      for (let i = activeMinerals.length - 1; i >= 0; i--) {
-        const m = activeMinerals[i];
-        m.life += dt;
-        m.rotation += m.rotationSpeed * dt;
-
-        // Friction
-        m.vx *= 0.93;
-        m.vy *= 0.93;
-
-        // Gravitational magnet attraction towards ship
-        const dx = ship.x - m.x;
-        const dy = ship.y - m.y;
-        const distToShip = Math.hypot(dx, dy);
-
-        if (distToShip < magnetRadius && distToShip > 1) {
-          const pull = (vacuumActive ? 850 : 380) * (1 - distToShip / magnetRadius);
-          m.vx += (dx / distToShip) * pull * dt;
-          m.vy += (dy / distToShip) * pull * dt;
+        const fleet = [shipRef.current, ...dronesRef.current];
+        const destroyed = ringEngineRef.current.update(fleet, world, step,
+          calculateDps(upgrades, craftingItems, quantumPerks), range, beams, speed);
+        if (fleet.some(ship => ship.miningTargets.length)) sound.playLaserHit();
+        for (const block of destroyed) {
+          const amount = handleBlockDestroyed(block, craftingItems, quantumPerks);
+          gains[block.type] = (gains[block.type] || 0) + amount;
+          destroyedCount++;
+          deepest = Math.max(deepest, Math.round(Math.hypot(block.x, block.y)));
         }
-
-        // Companion drones also help vacuum up minerals
-        dronesRef.current.forEach((drone) => {
-          const ddx = drone.x - m.x;
-          const ddy = drone.y - m.y;
-          const ddist = Math.hypot(ddx, ddy);
-          if (ddist < 75 && ddist > 1) {
-            const dpull = 320 * (1 - ddist / 75);
-            m.vx += (ddx / ddist) * dpull * dt;
-            m.vy += (ddy / ddist) * dpull * dt;
-          }
-        });
-
-        m.x += m.vx * dt;
-        m.y += m.vy * dt;
-
-        // Pickup collision detection
-        let collected = false;
-        if (distToShip < 16) {
-          collected = true;
-        } else {
-          for (const drone of dronesRef.current) {
-            if (Math.hypot(drone.x - m.x, drone.y - m.y) < 14) {
-              collected = true;
-              break;
-            }
-          }
-        }
-
-        if (collected) {
-          // Play crystal pickup chime
-          const tier = RESOURCE_DEFINITIONS[m.type].tier;
-          sound.playCollectMineral(tier);
-          particleSystem.spawnFloatingText(
-            m.x,
-            m.y,
-            `+${m.amount} ${RESOURCE_DEFINITIONS[m.type].name}`,
-            m.color
-          );
-
-          setResources((prev) => ({
-            ...prev,
-            [m.type]: (prev[m.type] || 0) + m.amount,
-          }));
-
-          setStats((prev) => ({
-            ...prev,
-            lifetimeResources: {
-              ...prev.lifetimeResources,
-              [m.type]: (prev.lifetimeResources[m.type] || 0) + m.amount,
-            },
-          }));
-
-          activeMinerals.splice(i, 1);
-        }
+        damage += fleet.reduce((sum, ship) => sum + (ship.miningTargets.length ? calculateDps(upgrades, craftingItems, quantumPerks) * step : 0), 0);
+        particleSystem.update(step);
       }
-
-      // 5. Update debris particles
-      particleSystem.update(dt, ship.x, ship.y, magnetRadius);
-
-      animationFrameId = requestAnimationFrame(gameLoop);
+      if (uiTimer >= 0.15) { flush(); uiTimer = 0; }
+      frame = requestAnimationFrame(tick);
     };
-
-    animationFrameId = requestAnimationFrame(gameLoop);
-    return () => cancelAnimationFrame(animationFrameId);
+    frame = requestAnimationFrame(tick);
+    return () => { cancelAnimationFrame(frame); flush(); };
   }, [upgrades, craftingItems, quantumPerks]);
 
-  const handleBlockDestroyed = (
-    block: BlockData,
-    bx: number,
-    by: number,
-    perks: QuantumPerk[]
-  ) => {
-    sound.playBlockShatter(RESOURCE_DEFINITIONS[block.type].tier);
-    particleSystem.spawnBlockShatter(bx, by, block.color, block.glow, RESOURCE_DEFINITIONS[block.type].tier);
-
-    // Multiplier calculation
-    const cosmicPerk = perks.find((p) => p.id === 'cosmic_multiplier');
-    const yieldMultiplier = 1 + (cosmicPerk ? cosmicPerk.level * 0.5 : 0);
-
-    const baseAmount = block.type === 'basalt' ? 2 : 1;
-    const finalAmount = Math.max(1, Math.round(baseAmount * yieldMultiplier));
-
-    // Spawn physical floating mineral gems for player/drone collection
-    const mineralCount = block.type === 'basalt' ? 2 : 1;
-    const amountPerChunk = Math.max(1, Math.round(finalAmount / mineralCount));
-
-    for (let i = 0; i < mineralCount; i++) {
-      const angle = (i / mineralCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.8;
-      const speed = 25 + Math.random() * 45;
-      droppedMineralsRef.current.push({
-        id: `min-${Date.now()}-${Math.random()}`,
-        x: bx + (Math.random() - 0.5) * 6,
-        y: by + (Math.random() - 0.5) * 6,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        type: block.type,
-        amount: amountPerChunk,
-        color: block.color,
-        glow: block.glow,
-        symbol: RESOURCE_DEFINITIONS[block.type].symbol,
-        life: 0,
-        maxLife: 60,
-        rotation: Math.random() * Math.PI * 2,
-        rotationSpeed: (Math.random() - 0.5) * 3,
-      });
-    }
-
-    // Increment run stats and lifetime stats
-    setStats((prev) => {
-      const depth = Math.round(Math.sqrt((bx / BLOCK_SIZE) ** 2 + (by / BLOCK_SIZE) ** 2));
-      return {
-        ...prev,
-        totalBlocksDestroyed: prev.totalBlocksDestroyed + 1,
-        blocksDestroyedThisRun: (prev.blocksDestroyedThisRun || 0) + 1,
-        maxDepthReached: Math.max(prev.maxDepthReached, depth),
-      };
-    });
+  const handleBlockDestroyed = (block: BlockData, crafting: CraftingItem[], perks: QuantumPerk[]) => {
+    const definition = RESOURCE_DEFINITIONS[block.type];
+    const x = (block.x + 0.5) * BLOCK_SIZE, y = (block.y + 0.5) * BLOCK_SIZE;
+    const cosmic = perks.find(perk => perk.id === 'cosmic_multiplier')?.level || 0;
+    const refining = crafting.reduce((sum, item) => sum + (item.crafted ? item.statBonus.refiningBonus || 0 : 0), 0);
+    const amount = Math.max(1, Math.round((block.type === 'basalt' ? 2 : 1) * (1 + cosmic * 0.5 + refining)));
+    // Fragments are visual only. Resources enter cargo without proximity checks.
+    sound.playBlockShatter(definition.tier);
+    particleSystem.spawnBlockShatter(x, y, block.color, block.glow, definition.tier);
+    particleSystem.spawnFloatingText(x, y, `+${amount} ${definition.name}`, block.color);
+    return amount;
   };
 
   const clearOfflineNotification = () => setOfflineEarnings(null);
@@ -938,11 +645,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         stats,
         ship: shipRef.current,
         drones: dronesRef.current,
-        droppedMinerals: droppedMineralsRef.current,
         world,
         currentDps,
         availableStardustOnPrestige,
-        hasManualTarget,
+        ringProgress,
         offlineEarnings,
         clearOfflineNotification,
         buyUpgrade,
@@ -951,8 +657,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         buyQuantumPerk,
         triggerQuantumSingularity,
         resetAllProgress,
-        setManualTarget,
-        clearManualTarget,
       }}
     >
       {children}

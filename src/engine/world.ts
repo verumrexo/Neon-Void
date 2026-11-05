@@ -4,6 +4,14 @@ export const CHUNK_SIZE = 16;
 export const BLOCK_SIZE = 26; // pixels per grid block
 export const SPAWN_CLEARING_RADIUS = 2.8; // initial hollow clearing in blocks (~73px radius)
 
+export function getRingNumber(gx: number, gy: number): number {
+  return Math.max(1, Math.floor(Math.hypot(gx, gy) - SPAWN_CLEARING_RADIUS) + 1);
+}
+export function getDepthBand(ring: number): number { return Math.floor((ring - 1) / 5); }
+export function getRingHardness(ring: number): number { return Math.pow(1.2, getDepthBand(ring)); }
+export const DEPTH_COLORS = ['#475569', '#476b68', '#526185', '#756087', '#8a6653', '#8a5361'];
+export function getDepthColor(ring: number): string { return DEPTH_COLORS[getDepthBand(ring) % DEPTH_COLORS.length]; }
+
 // Fast deterministic pseudo-random hash for procedural grid generation
 function hash2D(x: number, y: number): number {
   let h = Math.imul(x, 374761393) + Math.imul(y, 668265263);
@@ -18,6 +26,7 @@ export class AsteroidWorld {
   public damagedBlocks: Map<string, number> = new Map();
 
   public terrainEpoch = 0;
+  public rareBoost = 0;
   private chunkVersions = new Map<string, number>();
 
   public getChunkVersion(cx: number, cy: number): number {
@@ -106,7 +115,7 @@ export class AsteroidWorld {
   /**
    * Generates procedural block metadata for any coordinate on the infinite grid.
    */
-  public getBlock(gx: number, gy: number, rareBoost: number = 0): BlockData | null {
+  public getBlock(gx: number, gy: number, rareBoost: number = this.rareBoost): BlockData | null {
     if (this.isMined(gx, gy)) return null;
 
     const key = `${gx},${gy}`;
@@ -126,29 +135,31 @@ export class AsteroidWorld {
 
     if (dist >= 180 && clusterRoll > 0.94 - bonus) {
       type = 'sunstone';
-      baseHp = 220 + Math.floor(dist * 1.2);
+      baseHp = 220;
     } else if (dist >= 100 && clusterRoll > 0.88 - bonus) {
       // Void ore only appears beyond the deep-core boundary.
       type = 'voidOre';
-      baseHp = 95 + Math.floor(dist * 0.8);
+      baseHp = 95;
     } else if (dist >= 45 && clusterRoll > 0.76 - bonus) {
       // Emeraldite marks the first rare mineral zone.
       type = 'emeraldite';
-      baseHp = 45 + Math.floor(dist * 0.5);
+      baseHp = 45;
     } else if (commonRoll > quartzThreshold) {
       // Small quartz deposits near spawn, more frequent farther out.
       type = 'quartz';
-      baseHp = 25 + Math.floor(dist * 0.35);
+      baseHp = 25;
     } else if (commonRoll > 0.70) {
       type = 'iron';
-      baseHp = 14 + Math.floor(dist * 0.2);
+      baseHp = 14;
     } else {
       type = 'basalt';
-      baseHp = 8 + Math.floor(dist * 0.1);
+      baseHp = 8;
     }
 
+    const ring = getRingNumber(gx, gy);
+    baseHp = Math.ceil(baseHp * getRingHardness(ring));
     const def = RESOURCE_DEFINITIONS[type];
-    const currentHp = this.damagedBlocks.has(key) ? this.damagedBlocks.get(key)! : baseHp;
+    const currentHp = Math.min(baseHp, this.damagedBlocks.get(key) ?? baseHp);
 
     return {
       x: gx,
@@ -165,7 +176,7 @@ export class AsteroidWorld {
    * Applies mining damage to a block.
    * Returns true if the block was completely destroyed.
    */
-  public damageBlock(gx: number, gy: number, damage: number, rareBoost: number = 0): { destroyed: boolean; block: BlockData } {
+  public damageBlock(gx: number, gy: number, damage: number, rareBoost: number = this.rareBoost): { destroyed: boolean; block: BlockData } {
     const key = `${gx},${gy}`;
     const block = this.getBlock(gx, gy, rareBoost)!;
     const newHp = Math.max(0, block.hp - damage);
@@ -183,135 +194,4 @@ export class AsteroidWorld {
     }
   }
 
-  /**
-   * Finds the best surface block for the bumblebee ship to mine.
-   * Prioritizes exposed surface blocks within range to avoid unwanted blind burrowing.
-   */
-  public findBestMiningTarget(
-    worldX: number,
-    worldY: number,
-    rangePx: number,
-    preferredDir?: { x: number; y: number } | null,
-    allowInterior: boolean = false
-  ): { gx: number; gy: number; distPx: number; block: BlockData } | null {
-    const shipGx = Math.floor(worldX / BLOCK_SIZE);
-    const shipGy = Math.floor(worldY / BLOCK_SIZE);
-    const gridRange = Math.ceil(rangePx / BLOCK_SIZE) + 1;
-
-    let bestTarget: { gx: number; gy: number; distPx: number; block: BlockData } | null = null;
-    let bestScore = Infinity;
-
-    for (let gy = shipGy - gridRange; gy <= shipGy + gridRange; gy++) {
-      for (let gx = shipGx - gridRange; gx <= shipGx + gridRange; gx++) {
-        if (this.isMined(gx, gy)) continue;
-
-        // By default, only mine surface blocks unless manual guidance specifically requested interior
-        if (!allowInterior && !this.isSurfaceBlock(gx, gy)) {
-          continue;
-        }
-
-        const blockCenterWorldX = gx * BLOCK_SIZE + BLOCK_SIZE / 2;
-        const blockCenterWorldY = gy * BLOCK_SIZE + BLOCK_SIZE / 2;
-        const dx = blockCenterWorldX - worldX;
-        const dy = blockCenterWorldY - worldY;
-        const distPx = Math.sqrt(dx * dx + dy * dy);
-
-        if (distPx > rangePx) continue;
-
-        // Calculate score: lower is better
-        let score = distPx;
-
-        // If the player pointed in a direction, prioritize blocks in that direction
-        if (preferredDir) {
-          const dirX = preferredDir.x - worldX;
-          const dirY = preferredDir.y - worldY;
-          const dirLen = Math.sqrt(dirX * dirX + dirY * dirY);
-          if (dirLen > 0) {
-            const dot = (dx * dirX + dy * dirY) / (distPx * dirLen);
-            // Angle alignment bonus
-            score -= dot * 40;
-          }
-        }
-
-        // Slight bonus to finish off already-damaged blocks
-        if (this.damagedBlocks.has(`${gx},${gy}`)) {
-          score -= 30;
-        }
-
-        if (score < bestScore) {
-          bestScore = score;
-          const block = this.getBlock(gx, gy);
-          if (block) {
-            bestTarget = { gx, gy, distPx, block };
-          }
-        }
-      }
-    }
-
-    return bestTarget;
-  }
-
-  /**
-   * Finds up to `count` distinct surface blocks within range for multi-beam array.
-   */
-  public findMultipleMiningTargets(
-    worldX: number,
-    worldY: number,
-    rangePx: number,
-    count: number,
-    excludeKeys: Set<string> = new Set(),
-    preferredDir?: { x: number; y: number } | null,
-    rareBoost: number = 0
-  ): { gx: number; gy: number; distPx: number; block: BlockData }[] {
-    const shipGx = Math.floor(worldX / BLOCK_SIZE);
-    const shipGy = Math.floor(worldY / BLOCK_SIZE);
-    const gridRange = Math.ceil(rangePx / BLOCK_SIZE) + 1;
-
-    const candidates: { gx: number; gy: number; distPx: number; score: number; block: BlockData }[] = [];
-
-    for (let gy = shipGy - gridRange; gy <= shipGy + gridRange; gy++) {
-      for (let gx = shipGx - gridRange; gx <= shipGx + gridRange; gx++) {
-        const key = `${gx},${gy}`;
-        if (this.isMined(gx, gy) || excludeKeys.has(key)) continue;
-
-        if (!this.isSurfaceBlock(gx, gy)) continue;
-
-        const blockCenterWorldX = gx * BLOCK_SIZE + BLOCK_SIZE / 2;
-        const blockCenterWorldY = gy * BLOCK_SIZE + BLOCK_SIZE / 2;
-        const dx = blockCenterWorldX - worldX;
-        const dy = blockCenterWorldY - worldY;
-        const distPx = Math.hypot(dx, dy);
-
-        if (distPx > rangePx) continue;
-
-        let score = distPx;
-        if (preferredDir) {
-          const dirX = preferredDir.x - worldX;
-          const dirY = preferredDir.y - worldY;
-          const dirLen = Math.hypot(dirX, dirY);
-          if (dirLen > 0) {
-            const dot = (dx * dirX + dy * dirY) / (distPx * dirLen);
-            score -= dot * 40;
-          }
-        }
-
-        if (this.damagedBlocks.has(key)) {
-          score -= 30;
-        }
-
-        const block = this.getBlock(gx, gy, rareBoost);
-        if (block) {
-          candidates.push({ gx, gy, distPx, score, block });
-        }
-      }
-    }
-
-    candidates.sort((a, b) => a.score - b.score);
-    return candidates.slice(0, count).map((c) => ({
-      gx: c.gx,
-      gy: c.gy,
-      distPx: c.distPx,
-      block: c.block,
-    }));
-  }
 }

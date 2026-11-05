@@ -19,7 +19,7 @@ type ActiveTab = 'upgrades' | 'crafting' | 'quantum' | 'stats' | null;
 const MainContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => window.innerWidth >= 1024 ? 'upgrades' : null);
   const [isDrawerCollapsed, setIsDrawerCollapsed] = useState<boolean>(false);
-  const { offlineEarnings, clearOfflineNotification, availableStardustOnPrestige, drones, currentDps, hasManualTarget } = useGame();
+  const { offlineEarnings, clearOfflineNotification, availableStardustOnPrestige, drones, currentDps, ringProgress } = useGame();
 
   const handleTabSelect = (tab: 'upgrades' | 'crafting' | 'quantum' | 'stats') => {
     if (activeTab === tab && !isDrawerCollapsed) {
@@ -83,9 +83,9 @@ const MainContent: React.FC = () => {
           <div className="flight-status hidden md:flex">
             <span><b>{drones.length + 1}</b> ships online</span>
             <span><b>{currentDps}</b> dps / ship</span>
-            <span className="ml-auto">{hasManualTarget ? 'manual navigation' : 'mining active'}</span>
+            <span className="ml-auto">ring {ringProgress.ring} · auto mining</span>
           </div>
-          <div className="flight-help hidden md:flex"><span>click <b>move fleet</b></span><span>hold <b>steer</b></span><span>esc <b>stop</b></span><span>tab <b>toggle panel</b></span></div>
+          <div className="flight-help hidden md:flex"><span>automatic <b>ring excavation</b></span><span>cargo <b>instant collection</b></span><span>tab <b>toggle panel</b></span></div>
         </div>
 
         {/* Offline Earnings Toast */}
