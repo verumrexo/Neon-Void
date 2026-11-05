@@ -7,7 +7,7 @@ import {
   QuantumPerk,
   GameStats,
   BlockData,
-  Drone,
+  FleetShip,
   DroppedMineral,
 } from '../types/game';
 import { AsteroidWorld, BLOCK_SIZE } from '../engine/world';
@@ -40,12 +40,12 @@ export const INITIAL_CRAFTING_ITEMS: CraftingItem[] = [
   },
   {
     id: 'drone_bay_1',
-    name: 'Autonomous Drone Bay',
-    description: 'Fabricates a micro-triangle drone that orbits and mines automatically.',
+    name: 'Shipyard',
+    description: 'Builds another full-size mining ship with the same systems as your first.',
     cost: { iron: 250, quartz: 100, emeraldite: 35 },
     crafted: false,
     tier: 2,
-    effect: '+1 Mining Drone',
+    effect: '+1 Mining Ship',
     statBonus: { extraDrones: 1 },
   },
   {
@@ -60,12 +60,12 @@ export const INITIAL_CRAFTING_ITEMS: CraftingItem[] = [
   },
   {
     id: 'drone_bay_2',
-    name: 'Heavy Drone Wing',
-    description: 'Deploys an additional autonomous mining drone equipped with pulsed laser.',
+    name: 'Fleet Expansion',
+    description: 'Builds an additional mining ship sharing your fleet upgrades.',
     cost: { iron: 500, emeraldite: 80, voidOre: 30 },
     crafted: false,
     tier: 3,
-    effect: '+1 Mining Drone',
+    effect: '+1 Mining Ship',
     statBonus: { extraDrones: 1 },
   },
   {
@@ -126,8 +126,8 @@ export const INITIAL_QUANTUM_PERKS: QuantumPerk[] = [
   },
   {
     id: 'drone_matrix',
-    name: 'Permanent Drone Matrix',
-    description: 'Awaken with an autonomous mining drone immediately upon every reset.',
+    name: 'Permanent Fleet',
+    description: 'Start each reset with an additional mining ship.',
     cost: 4,
     costMultiplier: 2.5,
     level: 0,
@@ -177,7 +177,7 @@ interface GameContextType {
   quantumPerks: QuantumPerk[];
   stats: GameStats;
   ship: ShipPhysicsState;
-  drones: Drone[];
+  drones: FleetShip[];
   droppedMinerals: DroppedMineral[];
   world: AsteroidWorld;
   currentDps: number;
@@ -191,7 +191,7 @@ interface GameContextType {
   buyQuantumPerk: (perkId: string) => boolean;
   triggerQuantumSingularity: () => void;
   resetAllProgress: () => void;
-  setManualTarget: (worldX: number, worldY: number) => void;
+  setManualTarget: (worldX: number, worldY: number, mode?: 'destination' | 'heading') => void;
   clearManualTarget: () => void;
 }
 
@@ -220,7 +220,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     miningTargets: [],
   });
 
-  const dronesRef = useRef<Drone[]>([]);
+  const dronesRef = useRef<FleetShip[]>([]);
   const droppedMineralsRef = useRef<DroppedMineral[]>([]);
   const lockedTargetsRef = useRef<{ gx: number; gy: number }[]>([]);
   const [hasManualTarget, setHasManualTarget] = useState<boolean>(false);
@@ -280,8 +280,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const saved = JSON.parse(raw);
         if (saved.resources) setResources(saved.resources);
         if (saved.upgrades) setUpgrades(saved.upgrades);
-        if (saved.craftingItems) setCraftingItems(saved.craftingItems);
-        if (saved.quantumPerks) setQuantumPerks(saved.quantumPerks);
+        if (saved.craftingItems) setCraftingItems(INITIAL_CRAFTING_ITEMS.map(item => ({ ...item, crafted: saved.craftingItems.some((old: CraftingItem) => old.id === item.id && old.crafted) })));
+        if (saved.quantumPerks) setQuantumPerks(INITIAL_QUANTUM_PERKS.map(perk => ({ ...perk, level: saved.quantumPerks.find((old: QuantumPerk) => old.id === perk.id)?.level || 0 })));
         if (saved.stats) setStats(saved.stats);
         if (saved.world) world.deserialize(saved.world);
         if (
@@ -380,14 +380,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       for (let i = currentDrones.length; i < targetDroneCount; i++) {
         currentDrones.push({
           id: `drone-${i}-${Date.now()}`,
-          x: shipRef.current.x + (Math.random() - 0.5) * 40,
-          y: shipRef.current.y + (Math.random() - 0.5) * 40,
+          x: shipRef.current.x,
+          y: shipRef.current.y,
           vx: 0,
           vy: 0,
           angle: (i * 1.5) % (Math.PI * 2),
-          targetBlock: null,
-          beamActive: false,
-          color: '#00f0ff',
+          targetX: null, targetY: null, guidedAngle: null, isManualGuided: false,
+          miningTarget: null, miningTargets: [],
           wanderAngle: (i * 1.5) % (Math.PI * 2),
           wanderTimer: 1.0 + Math.random(),
           hoverAngle: Math.random() * Math.PI * 2,
@@ -611,22 +610,29 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const setManualTarget = (worldX: number, worldY: number) => {
-    const ship = shipRef.current;
-    const dx = worldX - ship.x;
-    const dy = worldY - ship.y;
-    ship.guidedAngle = Math.atan2(dy, dx);
-    ship.targetX = worldX;
-    ship.targetY = worldY;
-    ship.isManualGuided = true;
+  const setManualTarget = (worldX: number, worldY: number, mode: 'destination' | 'heading' = 'heading') => {
+    const heading = Math.atan2(worldY - shipRef.current.y, worldX - shipRef.current.x);
+    [shipRef.current, ...dronesRef.current].forEach((ship, index) => {
+      // Small formation offsets prevent the fleet piling onto one point.
+      const offset = index === 0 ? 0 : 28;
+      const angle = index * 2.39996;
+      ship.guidedAngle = heading;
+      ship.targetX = worldX + Math.cos(angle) * offset;
+      ship.targetY = worldY + Math.sin(angle) * offset;
+      ship.navigationMode = mode;
+      ship.parked = false;
+      ship.isManualGuided = true;
+    });
     setHasManualTarget(true);
   };
 
   const clearManualTarget = () => {
-    shipRef.current.targetX = null;
-    shipRef.current.targetY = null;
-    shipRef.current.guidedAngle = null;
-    shipRef.current.isManualGuided = false;
+    [shipRef.current, ...dronesRef.current].forEach(ship => {
+      ship.targetX = ship.targetY = ship.guidedAngle = null;
+      ship.isManualGuided = false;
+      ship.parked = true;
+      ship.vx = ship.vy = 0;
+    });
     setHasManualTarget(false);
   };
 
@@ -643,7 +649,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const rareBoost = getRareBoost(craftingItems, quantumPerks);
 
       // Check if ship reached manual destination and cleared it
-      if (!ship.isManualGuided && hasManualTarget) {
+      if (!ship.isManualGuided) {
         setHasManualTarget(false);
       }
 
@@ -755,15 +761,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // 3. UPDATE AUTONOMOUS COMPANION DRONES (MINI-SHIPS)
-      const droneDps = baseDps * 0.45;
+      const droneDps = baseDps;
       const shipLockedKeys = new Set(lockedTargetsRef.current.map((t) => `${t.gx},${t.gy}`));
-      const droneUpdate = physics.updateDrones(
+      const droneUpdate = physics.updateFleet(
         dronesRef.current,
-        ship,
         world,
         dt,
         rareBoost,
-        droneDps,
+        droneDps, rangePx, maxBeams, speedMult,
         shipLockedKeys
       );
       droneUpdate.destroyedBlocks.forEach((d) => {

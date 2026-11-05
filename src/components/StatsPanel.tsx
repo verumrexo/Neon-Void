@@ -38,7 +38,7 @@ export const StatsPanel: React.FC = () => {
       </div>
 
       {/* Top Telemetry KPI Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+      <div className="grid grid-cols-2 gap-2.5">
         <div className="p-3 rounded-xl border border-white/10 bg-[#080b12]/90">
           <div className="flex items-center gap-1.5 text-white/50 text-[11px] font-mono uppercase mb-1">
             <BarChart3 className="w-3.5 h-3.5 text-[#00f0ff]" />
@@ -85,7 +85,7 @@ export const StatsPanel: React.FC = () => {
         <h3 className="text-xs font-bold font-mono uppercase tracking-wider text-white/70">
           All-Time Resources Extracted
         </h3>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           {resourceKeys.map((resKey) => {
             const def = RESOURCE_DEFINITIONS[resKey];
             const amount = stats.lifetimeResources[resKey] || 0;

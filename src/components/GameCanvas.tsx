@@ -1,9 +1,10 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useGame } from '../state/gameContext';
-import { BLOCK_SIZE } from '../engine/world';
+import { BLOCK_SIZE, CHUNK_SIZE } from '../engine/world';
 import { particleSystem } from '../engine/particles';
 
 export const GameCanvas: React.FC = () => {
+  const fpsRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -25,7 +26,7 @@ export const GameCanvas: React.FC = () => {
     height: typeof window !== 'undefined' ? window.innerHeight : 800,
   });
 
-  const isDraggingRef = useRef<boolean>(false);
+  const gestureRef = useRef<{ id: number; started: number; x: number; y: number } | null>(null);
 
   // Keyboard shortcut listener to cancel manual guidance
   useEffect(() => {
@@ -82,48 +83,79 @@ export const GameCanvas: React.FC = () => {
     [dimensions]
   );
 
-  // Pointer / Touch events for bumblebee directional guidance
+  // A short press commits a fixed world destination. A hold steers until release.
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (gestureRef.current || e.button !== 0) return;
     e.currentTarget.setPointerCapture(e.pointerId);
-    isDraggingRef.current = true;
     const rect = e.currentTarget.getBoundingClientRect();
-    const worldPos = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
-    setManualTarget(worldPos.x, worldPos.y);
+    gestureRef.current = { id: e.pointerId, started: performance.now(), x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
-
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isDraggingRef.current) return;
+    const gesture = gestureRef.current;
+    if (!gesture || gesture.id !== e.pointerId) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const worldPos = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
-    setManualTarget(worldPos.x, worldPos.y);
+    gesture.x = e.clientX - rect.left;
+    gesture.y = e.clientY - rect.top;
   };
-
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    isDraggingRef.current = false;
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {
-      // ignore
+    const gesture = gestureRef.current;
+    if (!gesture || gesture.id !== e.pointerId) return;
+    gestureRef.current = null;
+    if (performance.now() - gesture.started < 220) {
+      const point = screenToWorld(gesture.x, gesture.y);
+      setManualTarget(point.x, point.y);
+    } else clearManualTarget();
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+  const cancelGesture = () => {
+    if (gestureRef.current) {
+      gestureRef.current = null;
+      clearManualTarget();
     }
   };
+  useEffect(() => {
+    window.addEventListener('blur', cancelGesture);
+    return () => window.removeEventListener('blur', cancelGesture);
+  });
 
   // Main Canvas Render Loop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
 
     let animId: number;
+    // Bake mineral glows once, rather than running thousands of shadow filters per frame.
+    const tiles = new Map<string, HTMLCanvasElement>();
+    const chunks = new Map<string, { canvas: HTMLCanvasElement; version: number; epoch: number }>();
 
+    let sampleStart = performance.now();
+    let sampleFrames = 0;
+    let renderScale = Math.min(1.25, window.devicePixelRatio || 1);
+    let slowSamples = 0;
     const render = () => {
+      const frameTime = performance.now();
+      sampleFrames++;
+      if (frameTime - sampleStart >= 1000) {
+        const fps = Math.round(sampleFrames * 1000 / (frameTime - sampleStart));
+        if (fpsRef.current) fpsRef.current.textContent = `${fps} fps`;
+        if (!document.hidden && fps < 50) slowSamples++; else slowSamples = 0;
+        if (slowSamples >= 2 && renderScale > 0.75) {
+          renderScale = Math.max(0.75, renderScale - 0.25);
+          slowSamples = 0;
+        }
+        sampleStart = frameTime;
+        sampleFrames = 0;
+      }
       // Read current canvas physical pixel dimensions directly from DOM
       const domW = canvas.clientWidth || (containerRef.current ? containerRef.current.clientWidth : 0);
       const domH = canvas.clientHeight || (containerRef.current ? containerRef.current.clientHeight : 0);
 
       const width = domW > 20 ? domW : dimensions.width > 20 ? dimensions.width : window.innerWidth;
       const height = domH > 20 ? domH : dimensions.height > 20 ? dimensions.height : window.innerHeight;
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      // Keep fullscreen retina rendering inside a practical pixel budget.
+      const dpr = Math.min(renderScale, Math.sqrt(1_600_000 / (width * height)));
 
       // Adjust buffer size
       const targetBufferW = Math.floor(width * dpr);
@@ -165,36 +197,23 @@ export const GameCanvas: React.FC = () => {
         }
       });
 
-      // Camera focal point: weighted towards player ship while framing the fleet
-      let targetCamX = validShipX;
-      let targetCamY = validShipY;
-      if (activeDroneCount > 0) {
-        const droneAvgX = droneSumX / activeDroneCount;
-        const droneAvgY = droneSumY / activeDroneCount;
-        targetCamX = validShipX * 0.75 + droneAvgX * 0.25;
-        targetCamY = validShipY * 0.75 + droneAvgY * 0.25;
-      }
-
-      // Smooth camera position tracking
-      if (Math.hypot(targetCamX - cameraRef.current.x, targetCamY - cameraRef.current.y) > 400) {
-        cameraRef.current.x = targetCamX;
-        cameraRef.current.y = targetCamY;
-      } else {
-        cameraRef.current.x += (targetCamX - cameraRef.current.x) * 0.08;
-        cameraRef.current.y += (targetCamY - cameraRef.current.y) * 0.08;
-      }
-
-      // Dynamic zoom: smoothly zooms out when ship and drones separate
-      let desiredZoom = 1.0;
-      if (activeDroneCount > 0) {
-        const spanW = maxX - minX + 240;
-        const spanH = maxY - minY + 240;
-        const fitZoomX = width / Math.max(width, spanW);
-        const fitZoomY = height / Math.max(height, spanH);
-        desiredZoom = Math.max(0.50, Math.min(1.0, Math.min(fitZoomX, fitZoomY)));
-      }
-      zoomRef.current += (desiredZoom - zoomRef.current) * 0.05;
+      // Frame all ships equally around their shared bounds.
+      const targetCamX = (minX + maxX) / 2;
+      const targetCamY = (minY + maxY) / 2;
+      cameraRef.current.x += (targetCamX - cameraRef.current.x) * 0.12;
+      cameraRef.current.y += (targetCamY - cameraRef.current.y) * 0.12;
+      const fleetZoom = activeDroneCount > 0 ? 1 / Math.sqrt(1 + activeDroneCount * 0.35) : 1;
+      // Account for camera smoothing so an outlying ship stays inside the view.
+      const extentX = Math.max(maxX - cameraRef.current.x, cameraRef.current.x - minX) + 65;
+      const extentY = Math.max(maxY - cameraRef.current.y, cameraRef.current.y - minY) + 65;
+      const desiredZoom = Math.min(fleetZoom, width / (extentX * 2), height / (extentY * 2));
+      zoomRef.current = Math.min(desiredZoom, zoomRef.current + (desiredZoom - zoomRef.current) * 0.05);
       const zoom = zoomRef.current;
+      const gesture = gestureRef.current;
+      if (gesture && performance.now() - gesture.started >= 220) {
+        const point = screenToWorld(gesture.x, gesture.y);
+        setManualTarget(point.x, point.y, 'heading');
+      }
 
       const camX = cameraRef.current.x;
       const camY = cameraRef.current.y;
@@ -238,9 +257,22 @@ export const GameCanvas: React.FC = () => {
         }
       }
 
+      // Rasterize static terrain in bounded chunks. Each frame composites a few images.
+      for (let cy = Math.floor(minGy / CHUNK_SIZE); cy <= Math.floor(maxGy / CHUNK_SIZE); cy++) {
+        for (let cx = Math.floor(minGx / CHUNK_SIZE); cx <= Math.floor(maxGx / CHUNK_SIZE); cx++) {
+          const key = `${cx},${cy}`;
+          const version = world.getChunkVersion(cx, cy);
+          let chunk = chunks.get(key);
+          if (!chunk || chunk.version !== version || chunk.epoch !== world.terrainEpoch) {
+            const image = chunk?.canvas || document.createElement('canvas');
+            image.width = image.height = CHUNK_SIZE * BLOCK_SIZE + 24;
+            const context = image.getContext('2d')!;
+            context.translate(12 - cx * CHUNK_SIZE * BLOCK_SIZE, 12 - cy * CHUNK_SIZE * BLOCK_SIZE);
+            {
+              const ctx = context;
       // 2. Draw Asteroid Blocks with high-contrast visible wireframes & vibrant gems
-      for (let gy = minGy; gy <= maxGy; gy++) {
-        for (let gx = minGx; gx <= maxGx; gx++) {
+      for (let gy = cy * CHUNK_SIZE; gy < (cy + 1) * CHUNK_SIZE; gy++) {
+        for (let gx = cx * CHUNK_SIZE; gx < (cx + 1) * CHUNK_SIZE; gx++) {
           if (world.isMined(gx, gy)) continue;
 
           const block = world.getBlock(gx, gy, 0);
@@ -250,6 +282,14 @@ export const GameCanvas: React.FC = () => {
           const by = gy * BLOCK_SIZE;
           const isSurface = world.isSurfaceBlock(gx, gy);
 
+          const tileKey = `${block.type}:${isSurface}`;
+          let tile = tiles.get(tileKey);
+          if (!tile) {
+            tile = document.createElement('canvas');
+            tile.width = tile.height = BLOCK_SIZE + 24;
+            const tileContext = tile.getContext('2d')!;
+            tileContext.translate(12, 12);
+            const ctx = tileContext;
           // Distinct base fill colors per block type
           if (block.type === 'quartz') {
             ctx.fillStyle = '#081d2a';
@@ -265,7 +305,7 @@ export const GameCanvas: React.FC = () => {
             // Basalt
             ctx.fillStyle = isSurface ? '#151926' : '#0e121c';
           }
-          ctx.fillRect(bx, by, BLOCK_SIZE - 1, BLOCK_SIZE - 1);
+          ctx.fillRect(0, 0, BLOCK_SIZE - 1, BLOCK_SIZE - 1);
 
           // Clear, distinct wireframe border
           if (block.type === 'quartz') {
@@ -288,11 +328,11 @@ export const GameCanvas: React.FC = () => {
             ctx.strokeStyle = isSurface ? 'rgba(255, 255, 255, 0.35)' : 'rgba(255, 255, 255, 0.12)';
             ctx.lineWidth = 1;
           }
-          ctx.strokeRect(bx + 0.5, by + 0.5, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
+          ctx.strokeRect(0.5, 0.5, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
 
           // Render glowing neon crystal symbols inside the block
-          const cx = bx + BLOCK_SIZE / 2;
-          const cy = by + BLOCK_SIZE / 2;
+          const cx = BLOCK_SIZE / 2;
+          const cy = BLOCK_SIZE / 2;
 
           if (block.type !== 'basalt') {
             ctx.save();
@@ -350,13 +390,35 @@ export const GameCanvas: React.FC = () => {
             ctx.fillRect(cx - 1, cy - 1, 2, 2);
           }
 
-          // Damage overlay if block has taken laser hits
-          if (block.hp < block.maxHp) {
-            const healthRatio = Math.max(0, block.hp / block.maxHp);
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-            ctx.fillRect(bx + 2, by + BLOCK_SIZE - 4, (BLOCK_SIZE - 5) * healthRatio, 2);
+            tiles.set(tileKey, tile);
           }
+          ctx.drawImage(tile, bx - 12, by - 12);
+
         }
+      }
+            }
+            chunk = { canvas: image, version, epoch: world.terrainEpoch };
+            chunks.set(key, chunk);
+          }
+          ctx.drawImage(chunk.canvas, cx * CHUNK_SIZE * BLOCK_SIZE - 12, cy * CHUNK_SIZE * BLOCK_SIZE - 12);
+        }
+      }
+      // Keep the cache bounded when exploring an infinite world.
+      if (chunks.size > 96) {
+        for (const key of chunks.keys()) {
+          const [cx, cy] = key.split(',').map(Number);
+          if (cx < Math.floor(minGx / CHUNK_SIZE) - 1 || cx > Math.floor(maxGx / CHUNK_SIZE) + 1 ||
+              cy < Math.floor(minGy / CHUNK_SIZE) - 1 || cy > Math.floor(maxGy / CHUNK_SIZE) + 1) chunks.delete(key);
+        }
+      }
+      for (const [key] of world.damagedBlocks) {
+        const [gx, gy] = key.split(',').map(Number);
+        if (gx < minGx || gx > maxGx || gy < minGy || gy > maxGy) continue;
+        const block = world.getBlock(gx, gy);
+        if (!block) continue;
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.fillRect(gx * BLOCK_SIZE + 2, (gy + 1) * BLOCK_SIZE - 4,
+          (BLOCK_SIZE - 5) * Math.max(0, block.hp / block.maxHp), 2);
       }
 
       // 3. Draw Laser Beams to all distinct targets (Multi-Beam Splitter Array)
@@ -372,7 +434,7 @@ export const GameCanvas: React.FC = () => {
         // Outer neon glow beam
         ctx.strokeStyle = target.color;
         ctx.shadowColor = target.glow;
-        ctx.shadowBlur = 12;
+        ctx.shadowBlur = 0;
         ctx.lineWidth = 2.4;
         ctx.beginPath();
         ctx.moveTo(validShipX, validShipY);
@@ -405,7 +467,7 @@ export const GameCanvas: React.FC = () => {
         ctx.rotate(min.rotation);
 
         ctx.shadowColor = min.glow;
-        ctx.shadowBlur = 10;
+        ctx.shadowBlur = 0;
 
         // Gem faceted diamond hull
         ctx.strokeStyle = min.color;
@@ -430,44 +492,6 @@ export const GameCanvas: React.FC = () => {
         ctx.restore();
       });
 
-      // 5. Draw Drones and Drone Beams
-      drones.forEach((drone) => {
-        if (drone.beamActive && drone.targetBlock) {
-          const dtx = drone.targetBlock.x * BLOCK_SIZE + BLOCK_SIZE / 2;
-          const dty = drone.targetBlock.y * BLOCK_SIZE + BLOCK_SIZE / 2;
-          ctx.save();
-          ctx.strokeStyle = drone.color;
-          ctx.shadowColor = 'rgba(0, 240, 255, 0.9)';
-          ctx.shadowBlur = 6;
-          ctx.lineWidth = 1.2;
-          ctx.beginPath();
-          ctx.moveTo(drone.x, drone.y);
-          ctx.lineTo(dtx, dty);
-          ctx.stroke();
-          ctx.restore();
-        }
-
-        // Drone vector triangle
-        ctx.save();
-        ctx.translate(drone.x, drone.y);
-        ctx.rotate(drone.angle);
-        ctx.strokeStyle = '#ffffff';
-        ctx.fillStyle = '#050508';
-        ctx.lineWidth = 1.2;
-        ctx.shadowColor = drone.color;
-        ctx.shadowBlur = 5;
-
-        ctx.beginPath();
-        ctx.moveTo(7, 0);
-        ctx.lineTo(-5, -4);
-        ctx.lineTo(-3, 0);
-        ctx.lineTo(-5, 4);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        ctx.restore();
-      });
-
       // 5. Draw Particles and Floating Numbers
       particleSystem.render(ctx);
 
@@ -477,15 +501,15 @@ export const GameCanvas: React.FC = () => {
         const rayLen = 75;
         const startX = validShipX + Math.cos(ship.guidedAngle) * 14;
         const startY = validShipY + Math.sin(ship.guidedAngle) * 14;
-        const endX = validShipX + Math.cos(ship.guidedAngle) * rayLen;
-        const endY = validShipY + Math.sin(ship.guidedAngle) * rayLen;
+        const endX = ship.navigationMode === 'heading' ? validShipX + Math.cos(ship.guidedAngle) * rayLen : ship.targetX ?? validShipX;
+        const endY = ship.navigationMode === 'heading' ? validShipY + Math.sin(ship.guidedAngle) * rayLen : ship.targetY ?? validShipY;
 
         // Glowing trajectory line
         ctx.setLineDash([5, 4]);
         ctx.lineDashOffset = -Date.now() * 0.04;
         ctx.strokeStyle = '#00f0ff';
         ctx.shadowColor = 'rgba(0, 240, 255, 0.85)';
-        ctx.shadowBlur = 10;
+        ctx.shadowBlur = 0;
         ctx.lineWidth = 1.6;
 
         ctx.beginPath();
@@ -520,16 +544,28 @@ export const GameCanvas: React.FC = () => {
         particleSystem.spawnThrusterMote(nozzleX, nozzleY, ship.angle);
       }
 
+      for (const fleetShip of [ship, ...drones]) {
+        if (fleetShip !== ship) {
+          for (const target of fleetShip.miningTargets) {
+            if (world.isMined(target.gx, target.gy)) continue;
+            ctx.strokeStyle = target.color;
+            ctx.lineWidth = 2.4;
+            ctx.beginPath();
+            ctx.moveTo(fleetShip.x, fleetShip.y);
+            ctx.lineTo((target.gx + 0.5) * BLOCK_SIZE, (target.gy + 0.5) * BLOCK_SIZE);
+            ctx.stroke();
+          }
+        }
       // 7. Draw The Player Ship (Sleek Vector Triangle)
       ctx.save();
-      ctx.translate(validShipX, validShipY);
-      ctx.rotate(ship.angle);
+      ctx.translate(fleetShip.x, fleetShip.y);
+      ctx.rotate(fleetShip.angle);
 
       // Soft thruster trail glow (calm, subtle)
       const thrusterLength = 5 + Math.random() * 5;
       ctx.strokeStyle = '#00f0ff';
       ctx.shadowColor = 'rgba(0, 240, 255, 0.8)';
-      ctx.shadowBlur = 6;
+      ctx.shadowBlur = 0;
       ctx.lineWidth = 1.4;
       ctx.beginPath();
       ctx.moveTo(-9, 0);
@@ -544,7 +580,7 @@ export const GameCanvas: React.FC = () => {
         ctx.fillStyle = '#050508';
         ctx.lineWidth = 1.8;
         ctx.shadowColor = 'rgba(255, 255, 255, 0.8)';
-        ctx.shadowBlur = 8;
+        ctx.shadowBlur = 0;
 
         ctx.beginPath();
         ctx.moveTo(16, 0);
@@ -559,7 +595,7 @@ export const GameCanvas: React.FC = () => {
 
         ctx.fillStyle = '#00f0ff';
         ctx.shadowColor = '#00f0ff';
-        ctx.shadowBlur = 6;
+        ctx.shadowBlur = 0;
         ctx.fillRect(0, -1.5, 5, 3);
       } else {
         // Classic Minimalist Space Triangle Wireframe
@@ -567,7 +603,7 @@ export const GameCanvas: React.FC = () => {
         ctx.fillStyle = '#050508';
         ctx.lineWidth = 1.6;
         ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
-        ctx.shadowBlur = 6;
+        ctx.shadowBlur = 0;
 
         ctx.beginPath();
         ctx.moveTo(13, 0); // Nose
@@ -584,6 +620,8 @@ export const GameCanvas: React.FC = () => {
 
       ctx.restore();
 
+      }
+
       ctx.restore(); // Restore world camera transform
       ctx.restore(); // Restore DPR transform
 
@@ -596,11 +634,14 @@ export const GameCanvas: React.FC = () => {
 
   return (
     <div ref={containerRef} className="relative w-full h-full min-h-[300px] overflow-hidden cursor-crosshair">
+      <div ref={fpsRef} className="absolute top-5 right-6 z-10 pointer-events-none text-[10px] font-mono text-white/50 tabular-nums" aria-label="Frames per second">measuring fps</div>
       <canvas
         ref={canvasRef}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onPointerCancel={cancelGesture}
+        onLostPointerCapture={cancelGesture}
         className="w-full h-full block touch-none"
       />
     </div>

@@ -1,5 +1,5 @@
 import { AsteroidWorld, BLOCK_SIZE } from './world';
-import { Drone } from '../types/game';
+import { FleetShip } from '../types/game';
 
 export interface ShipPhysicsState {
   x: number;
@@ -10,6 +10,8 @@ export interface ShipPhysicsState {
   targetX: number | null;
   targetY: number | null;
   guidedAngle: number | null;
+  navigationMode?: 'destination' | 'heading';
+  parked?: boolean;
   isManualGuided: boolean;
   wanderAngle: number;
   wanderTimer: number;
@@ -19,7 +21,6 @@ export interface ShipPhysicsState {
 }
 
 export const SHIP_RADIUS = 10; // Physical collision radius in pixels
-export const DRONE_RADIUS = 7; // Drone physical collision radius in pixels
 
 export class PhysicsEngine {
   /**
@@ -40,18 +41,30 @@ export class PhysicsEngine {
 
     const now = Date.now();
 
-    // 1. CONSTANT DIRECTIONAL NAVIGATION
-    // The player presses once, and the ship constantly flies in that chosen direction!
     if (ship.isManualGuided && ship.guidedAngle !== null) {
-      // Rotate ship to face the navigation direction
+      let speed = guidedSpeed;
+      if (ship.navigationMode !== 'heading' && ship.targetX !== null && ship.targetY !== null) {
+        const dx = ship.targetX - ship.x;
+        const dy = ship.targetY - ship.y;
+        const distance = Math.hypot(dx, dy);
+        ship.guidedAngle = Math.atan2(dy, dx);
+        speed = Math.min(guidedSpeed, distance * 4);
+        if (distance < 2) {
+          ship.x = ship.targetX;
+          ship.y = ship.targetY;
+          ship.vx = ship.vy = 0;
+          ship.isManualGuided = false;
+          ship.guidedAngle = null;
+          ship.targetX = ship.targetY = null;
+          ship.parked = false;
+          return;
+        }
+      }
       ship.angle = this.lerpAngle(ship.angle, ship.guidedAngle, turnSpeed * dt);
-
-      // Constant forward propulsion in the chosen direction
-      const targetVx = Math.cos(ship.angle) * guidedSpeed;
-      const targetVy = Math.sin(ship.angle) * guidedSpeed;
-
-      ship.vx += (targetVx - ship.vx) * 8.0 * dt;
-      ship.vy += (targetVy - ship.vy) * 8.0 * dt;
+      ship.vx = Math.cos(ship.guidedAngle) * speed;
+      ship.vy = Math.sin(ship.guidedAngle) * speed;
+    } else if (ship.parked) {
+      ship.vx = ship.vy = 0;
     } else if (miningTarget) {
       // 2. AUTONOMOUS BUMBLEBEE HOVERING & ORBITING NEAR MINED ROCK
       // Roams around gracefully in the open cave near the block
@@ -195,226 +208,37 @@ export class PhysicsEngine {
       }
     }
 
-    // If the ship was navigating and hit a block:
-    // "if it hits a block, it stops there and starts roaming around like a bee again."
     if (collidedWithBlock && ship.isManualGuided) {
       ship.isManualGuided = false;
-      ship.guidedAngle = null;
-      ship.targetX = null;
-      ship.targetY = null;
-
-      // Start roaming like a bee pointing away from the block into the open cave
-      const normLen = Math.hypot(collisionNormalX, collisionNormalY);
-      if (normLen > 0.001) {
-        ship.wanderAngle = Math.atan2(collisionNormalY, collisionNormalX) + (Math.random() - 0.5) * 0.5;
-      } else {
-        ship.wanderAngle += Math.PI * 0.7;
-      }
-      ship.wanderTimer = 2.0;
+      ship.targetX = ship.targetY = ship.guidedAngle = null;
+      ship.vx = ship.vy = 0;
+      ship.parked = false;
+    }
+    if (collidedWithBlock && !ship.isManualGuided) {
+      ship.wanderAngle = Math.atan2(collisionNormalY, collisionNormalX);
     }
   }
 
-  /**
-   * Updates autonomous companion ships (drones) with a mind of their own.
-   * Drones roam like mini-bees in the cavern, lock onto their own individual blocks,
-   * deal real damage, finish mining until destroyed, and obey strict rigid block collision.
-   */
-  public updateDrones(
-    drones: Drone[],
-    ship: ShipPhysicsState,
-    world: AsteroidWorld,
-    dt: number,
-    rareBoost: number = 0,
-    droneDps: number = 10,
-    excludedTargets: Set<string> = new Set()
-  ): { destroyedBlocks: { gx: number; gy: number; block: any }[] } {
-    const destroyedBlocks: { gx: number; gy: number; block: any }[] = [];
-    const cruiseSpeed = 48; // Agile mini-ship flight speed
-    const turnSpeed = 5.0;
-    const now = Date.now();
-
-    // Track targets claimed by drones this frame to avoid duplicate locking
-    const droneClaimedTargets = new Set<string>();
-
-    drones.forEach((drone, index) => {
-      // Initialize wander properties if missing
-      if (typeof drone.wanderAngle !== 'number') drone.wanderAngle = (index * 1.5) % (Math.PI * 2);
-      if (typeof drone.wanderTimer !== 'number') drone.wanderTimer = 1.0 + Math.random() * 2.0;
-      if (typeof drone.hoverAngle !== 'number') drone.hoverAngle = Math.random() * Math.PI * 2;
-
-      // 1. VERIFY EXISTING TARGET LOCK
-      let activeTarget: { gx: number; gy: number } | null = null;
-      if (drone.targetBlock) {
-        const { x: tgx, y: tgy } = drone.targetBlock;
-        if (world.isMined(tgx, tgy)) {
-          drone.targetBlock = null;
-        } else {
-          const bx = tgx * BLOCK_SIZE + BLOCK_SIZE / 2;
-          const by = tgy * BLOCK_SIZE + BLOCK_SIZE / 2;
-          const dist = Math.hypot(bx - drone.x, by - drone.y);
-          // Keep lock if within 130px sensor range
-          if (dist <= 130) {
-            activeTarget = { gx: tgx, gy: tgy };
-            droneClaimedTargets.add(`${tgx},${tgy}`);
-          } else {
-            drone.targetBlock = null;
-          }
-        }
+  public updateFleet(
+    ships: FleetShip[], world: AsteroidWorld, dt: number,
+    rareBoost: number, dps: number, range: number, beamCount: number,
+    speedMultiplier: number, excludedTargets: Set<string>
+  ): { destroyedBlocks: { gx: number; gy: number; block: import('../types/game').BlockData }[] } {
+    const destroyedBlocks: { gx: number; gy: number; block: import('../types/game').BlockData }[] = [];
+    const claimed = new Set(excludedTargets);
+    for (const ship of ships) {
+      const targets = world.findMultipleMiningTargets(ship.x, ship.y, range, beamCount, claimed,
+        ship.isManualGuided && ship.targetX !== null && ship.targetY !== null
+          ? { x: ship.targetX, y: ship.targetY } : null, rareBoost);
+      ship.miningTargets = targets.map(t => ({ gx: t.gx, gy: t.gy, color: t.block.color, glow: t.block.glow }));
+      ship.miningTarget = ship.miningTargets[0] || null;
+      this.updateShip(ship, world, dt, ship.miningTarget, speedMultiplier);
+      for (const target of targets) {
+        claimed.add(`${target.gx},${target.gy}`);
+        const result = world.damageBlock(target.gx, target.gy, dps / Math.max(1, targets.length * 0.75) * dt, rareBoost);
+        if (result.destroyed) destroyedBlocks.push({ gx: target.gx, gy: target.gy, block: result.block });
       }
-
-      // 2. ACQUIRE NEW TARGET IF UNLOCKED
-      if (!activeTarget) {
-        const combinedExcluded = new Set([...excludedTargets, ...droneClaimedTargets]);
-        const found = world.findMultipleMiningTargets(
-          drone.x,
-          drone.y,
-          95,
-          1,
-          combinedExcluded,
-          null,
-          rareBoost
-        );
-        if (found.length > 0) {
-          activeTarget = { gx: found[0].gx, gy: found[0].gy };
-          drone.targetBlock = { x: found[0].gx, y: found[0].gy };
-          droneClaimedTargets.add(`${found[0].gx},${found[0].gy}`);
-        }
-      }
-
-      // 3. AUTONOMOUS FLIGHT / BEE ROAMING
-      if (activeTarget) {
-        // Drone hovers and orbits near its targeted block
-        drone.beamActive = true;
-        const targetWorldX = activeTarget.gx * BLOCK_SIZE + BLOCK_SIZE / 2;
-        const targetWorldY = activeTarget.gy * BLOCK_SIZE + BLOCK_SIZE / 2;
-        const dx = targetWorldX - drone.x;
-        const dy = targetWorldY - drone.y;
-
-        const idealDist = 42;
-        drone.hoverAngle += dt * 1.1;
-
-        const angleFromRock = Math.atan2(drone.y - targetWorldY, drone.x - targetWorldX);
-        const standAngle = angleFromRock + Math.sin(drone.hoverAngle) * 0.7;
-        let standX = targetWorldX + Math.cos(standAngle) * idealDist;
-        let standY = targetWorldY + Math.sin(standAngle) * idealDist;
-
-        // Add subtle organic bobbing
-        standX += Math.sin(now * 0.0035 + index) * 5;
-        standY += Math.cos(now * 0.004 + index) * 5;
-
-        const steerX = standX - drone.x;
-        const steerY = standY - drone.y;
-        const steerDist = Math.hypot(steerX, steerY);
-
-        // Turn drone to face the block being mined
-        const faceAngle = Math.atan2(dy, dx);
-        drone.angle = this.lerpAngle(drone.angle, faceAngle, turnSpeed * dt);
-
-        const hoverSpeed = Math.min(cruiseSpeed, Math.max(16, steerDist * 1.8));
-        const targetVx = (steerDist > 1 ? steerX / steerDist : 0) * hoverSpeed;
-        const targetVy = (steerDist > 1 ? steerY / steerDist : 0) * hoverSpeed;
-
-        drone.vx += (targetVx - drone.vx) * 4.5 * dt;
-        drone.vy += (targetVy - drone.vy) * 4.5 * dt;
-
-        // Apply drone mining damage
-        const damageThisFrame = droneDps * dt;
-        const res = world.damageBlock(activeTarget.gx, activeTarget.gy, damageThisFrame, rareBoost);
-        if (res.destroyed) {
-          destroyedBlocks.push({ gx: activeTarget.gx, gy: activeTarget.gy, block: res.block });
-          drone.targetBlock = null;
-          drone.beamActive = false;
-        }
-      } else {
-        // Drone has no target: roams open caverns like a bee
-        drone.beamActive = false;
-        drone.wanderTimer -= dt;
-        if (drone.wanderTimer <= 0) {
-          drone.wanderTimer = 1.4 + Math.random() * 1.6;
-          drone.wanderAngle += (Math.random() - 0.5) * 1.5;
-        }
-
-        // Keep companion drone within ~220px of mother ship so they stay in exploratory orbit
-        const distFromShip = Math.hypot(drone.x - ship.x, drone.y - ship.y);
-        if (distFromShip > 200) {
-          const angleToShip = Math.atan2(ship.y - drone.y, ship.x - drone.x);
-          drone.wanderAngle = this.lerpAngle(drone.wanderAngle, angleToShip, 0.4);
-        }
-
-        // Avoid solid walls ahead
-        const lookDist = 20;
-        const checkX = drone.x + Math.cos(drone.wanderAngle) * lookDist;
-        const checkY = drone.y + Math.sin(drone.wanderAngle) * lookDist;
-        const checkGx = Math.floor(checkX / BLOCK_SIZE);
-        const checkGy = Math.floor(checkY / BLOCK_SIZE);
-        if (!world.isMined(checkGx, checkGy)) {
-          drone.wanderAngle += Math.PI * 0.6;
-        }
-
-        drone.angle = this.lerpAngle(drone.angle, drone.wanderAngle, turnSpeed * dt);
-        const targetVx = Math.cos(drone.angle) * cruiseSpeed;
-        const targetVy = Math.sin(drone.angle) * cruiseSpeed;
-
-        drone.vx += (targetVx - drone.vx) * 3.5 * dt;
-        drone.vy += (targetVy - drone.vy) * 3.5 * dt;
-      }
-
-      // Move drone
-      drone.x += drone.vx * dt;
-      drone.y += drone.vy * dt;
-
-      // 4. RIGID BLOCK COLLISION RESOLUTION (Drones CANNOT go through blocks)
-      const dGx = Math.floor(drone.x / BLOCK_SIZE);
-      const dGy = Math.floor(drone.y / BLOCK_SIZE);
-
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const gx = dGx + dx;
-          const gy = dGy + dy;
-
-          if (world.isMined(gx, gy)) continue;
-
-          const bx0 = gx * BLOCK_SIZE;
-          const bx1 = bx0 + BLOCK_SIZE;
-          const by0 = gy * BLOCK_SIZE;
-          const by1 = by0 + BLOCK_SIZE;
-
-          const cx = Math.max(bx0, Math.min(drone.x, bx1));
-          const cy = Math.max(by0, Math.min(drone.y, by1));
-
-          const diffX = drone.x - cx;
-          const diffY = drone.y - cy;
-          const distSq = diffX * diffX + diffY * diffY;
-
-          if (distSq < DRONE_RADIUS * DRONE_RADIUS) {
-            const dist = Math.sqrt(distSq);
-            let nx = 0;
-            let ny = 0;
-            if (dist > 0.0001) {
-              nx = diffX / dist;
-              ny = diffY / dist;
-            } else {
-              const blockCenterX = bx0 + BLOCK_SIZE / 2;
-              const blockCenterY = by0 + BLOCK_SIZE / 2;
-              const outAngle = Math.atan2(drone.y - blockCenterY, drone.x - blockCenterX);
-              nx = Math.cos(outAngle);
-              ny = Math.sin(outAngle);
-            }
-
-            const penetration = DRONE_RADIUS - dist;
-            drone.x += nx * penetration;
-            drone.y += ny * penetration;
-
-            const velNorm = drone.vx * nx + drone.vy * ny;
-            if (velNorm < 0) {
-              drone.vx -= velNorm * nx;
-              drone.vy -= velNorm * ny;
-            }
-          }
-        }
-      }
-    });
-
+    }
     return { destroyedBlocks };
   }
 

@@ -2,7 +2,7 @@ import React from 'react';
 import { useGame } from '../state/gameContext';
 import { RESOURCE_DEFINITIONS, ResourceType } from '../types/game';
 import { sound } from '../audio/sound';
-import { Volume2, VolumeX, Sparkles, Activity } from 'lucide-react';
+import { Volume2, VolumeX, Sparkles, Activity, Maximize } from 'lucide-react';
 
 interface TopBarProps {
   activeTab: 'upgrades' | 'crafting' | 'quantum' | 'stats' | null;
@@ -21,7 +21,7 @@ export const TopBar: React.FC<TopBarProps> = ({ activeTab, setActiveTab }) => {
   const primaryResources: ResourceType[] = ['basalt', 'iron', 'quartz', 'emeraldite', 'voidOre', 'sunstone'];
 
   return (
-    <header className="relative z-30 flex flex-col border-b border-white/10 bg-[#06080e]/95 backdrop-blur-xl">
+    <header className="command-header relative z-30 flex flex-col border-b border-white/10 bg-[#06080e]/95 backdrop-blur-xl">
       {/* Primary Status Bar */}
       <div className="flex items-center justify-between gap-3 px-4 py-2.5">
         {/* Left: Brand & Telemetry */}
@@ -49,7 +49,7 @@ export const TopBar: React.FC<TopBarProps> = ({ activeTab, setActiveTab }) => {
                 : 'text-white/70 hover:text-white hover:bg-white/5'
             }`}
           >
-            Upgrades
+            Upgrades <kbd>1</kbd>
           </button>
           <button
             onClick={() => setActiveTab('crafting')}
@@ -59,7 +59,7 @@ export const TopBar: React.FC<TopBarProps> = ({ activeTab, setActiveTab }) => {
                 : 'text-white/70 hover:text-white hover:bg-white/5'
             }`}
           >
-            Crafting
+            Crafting <kbd>2</kbd>
           </button>
           <button
             onClick={() => setActiveTab('quantum')}
@@ -80,7 +80,7 @@ export const TopBar: React.FC<TopBarProps> = ({ activeTab, setActiveTab }) => {
                 : 'text-white/70 hover:text-white hover:bg-white/5'
             }`}
           >
-            Stats
+            Stats <kbd>4</kbd>
           </button>
         </nav>
 
@@ -97,6 +97,12 @@ export const TopBar: React.FC<TopBarProps> = ({ activeTab, setActiveTab }) => {
           )}
 
           <button
+            onClick={() => { const operation = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); operation.catch(() => {}); }}
+            title="Toggle fullscreen"
+            aria-label="Toggle fullscreen"
+            className="hidden md:block p-2 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5"
+          ><Maximize className="w-4 h-4" /></button>
+          <button
             onClick={handleToggleMute}
             title={muted ? 'Unmute Audio' : 'Mute Audio'}
             className="p-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 active:scale-95 transition-all"
@@ -107,19 +113,17 @@ export const TopBar: React.FC<TopBarProps> = ({ activeTab, setActiveTab }) => {
       </div>
 
       {/* Row 2: High-contrast, tactile horizontal resource ticker */}
-      <div className="flex items-center gap-2.5 overflow-x-auto px-4 py-1.5 border-t border-white/5 bg-[#04060a]/80 scrollbar-none text-xs font-mono">
+      <div className="resource-strip flex items-center gap-2.5 overflow-x-auto px-4 py-1.5 border-t border-white/5 bg-[#04060a]/80 scrollbar-none text-xs font-mono">
         {primaryResources.map((resKey) => {
           const count = resources[resKey] || 0;
           const def = RESOURCE_DEFINITIONS[resKey];
           // Hide deep ores until discovered or possessed
-          if (count === 0 && (resKey === 'emeraldite' || resKey === 'voidOre' || resKey === 'sunstone')) {
-            return null;
-          }
+
 
           return (
             <div
               key={resKey}
-              className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/[0.03] border border-white/[0.06] whitespace-nowrap"
+              className="resource-cell flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/[0.03] border border-white/[0.06] whitespace-nowrap"
             >
               <span style={{ color: def.color }}>{def.symbol}</span>
               <span className="text-white/50 text-[11px]">{def.name}:</span>

@@ -31,15 +31,15 @@ export const QuantumTree: React.FC = () => {
       : quantumPerks.filter((p) => p.branch === selectedBranch);
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
+    <div className="quantum-panel p-4 max-w-4xl mx-auto space-y-6">
       {/* Header: Singularity Chamber */}
       <div className="p-5 rounded-lg border border-[#c084fc]/30 bg-gradient-to-r from-[#0d0914] via-[#090b10] to-[#0d0914] relative overflow-hidden">
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 relative z-10">
+        <div className="flex flex-col items-start justify-between gap-4 relative z-10">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <Sparkles className="w-5 h-5 text-[#c084fc]" />
               <h2 className="text-base font-bold text-white tracking-wide uppercase">
-                Quantum Singularity Collapse
+                Quantum Singularity
               </h2>
             </div>
             <p className="text-xs text-white/60 max-w-lg">
@@ -48,7 +48,7 @@ export const QuantumTree: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 shrink-0">
+          <div className="flex flex-col items-start gap-4 shrink-0">
             <div className="font-mono">
               <div className="text-[11px] text-white/40 uppercase">Claimable Stardust</div>
               <div className="text-xl font-bold text-[#c084fc] tabular-nums" style={{ textShadow: '0 0 12px rgba(192, 132, 252, 0.8)' }}>
@@ -73,7 +73,7 @@ export const QuantumTree: React.FC = () => {
         {/* Sector Progress Bar to unlock Singularity */}
         <div className="mt-4 pt-3 border-t border-white/10 space-y-2">
           <div className="flex items-center justify-between text-xs font-mono text-white/60">
-            <span>Sector Mining Progress (Unlocks at 120 blocks):</span>
+            <span>Mining progress:</span>
             <span className="text-white font-semibold tabular-nums">
               {stats.blocksDestroyedThisRun || 0} / 120 blocks
             </span>

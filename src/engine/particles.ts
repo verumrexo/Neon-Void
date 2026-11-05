@@ -54,7 +54,7 @@ export class ParticleSystem {
    * Spawns an explosion of luminous shards, debris, and sparks when a block is destroyed.
    */
   public spawnBlockShatter(x: number, y: number, color: string, glow: string, tier: number = 1) {
-    const sparkCount = 12 + Math.min(18, tier * 3);
+    const sparkCount = Math.min(Math.max(0, 180 - this.particles.length), 12 + Math.min(18, tier * 3));
     for (let i = 0; i < sparkCount; i++) {
       const angle = (i / sparkCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
       const speed = 40 + Math.random() * 120 * (0.8 + tier * 0.2);
@@ -146,7 +146,7 @@ export class ParticleSystem {
       ctx.globalAlpha = p.alpha;
       ctx.fillStyle = p.color;
       ctx.shadowColor = p.glow;
-      ctx.shadowBlur = 8;
+      ctx.shadowBlur = 0;
 
       if (p.shape === 'circle') {
         ctx.beginPath();
@@ -174,7 +174,7 @@ export class ParticleSystem {
       for (const t of this.floatingTexts) {
         ctx.globalAlpha = t.alpha;
         ctx.shadowColor = t.color;
-        ctx.shadowBlur = 6;
+        ctx.shadowBlur = 0;
         ctx.fillStyle = t.color;
         ctx.fillText(t.text, t.x, t.y);
       }

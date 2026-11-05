@@ -1,13 +1,14 @@
 import { BlockData, ResourceType, RESOURCE_DEFINITIONS } from '../types/game';
 
+export const CHUNK_SIZE = 16;
 export const BLOCK_SIZE = 26; // pixels per grid block
 export const SPAWN_CLEARING_RADIUS = 2.8; // initial hollow clearing in blocks (~73px radius)
 
 // Fast deterministic pseudo-random hash for procedural grid generation
 function hash2D(x: number, y: number): number {
-  let h = x * 374761393 + y * 668265263;
-  h = (h ^ (h >> 13)) * 1274126177;
-  return ((h ^ (h >> 16)) >>> 0) / 4294967296;
+  let h = Math.imul(x, 374761393) + Math.imul(y, 668265263);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
 export class AsteroidWorld {
@@ -15,6 +16,20 @@ export class AsteroidWorld {
   public minedBlocks: Set<string> = new Set();
   // Map of blocks that have taken damage but not yet broken: "x,y" -> currentHp
   public damagedBlocks: Map<string, number> = new Map();
+
+  public terrainEpoch = 0;
+  private chunkVersions = new Map<string, number>();
+
+  public getChunkVersion(cx: number, cy: number): number {
+    return this.chunkVersions.get(`${cx},${cy}`) || 0;
+  }
+
+  private invalidateTerrain(gx: number, gy: number) {
+    for (const [x, y] of [[gx, gy], [gx-1, gy], [gx+1, gy], [gx, gy-1], [gx, gy+1]]) {
+      const key = `${Math.floor(x / CHUNK_SIZE)},${Math.floor(y / CHUNK_SIZE)}`;
+      this.chunkVersions.set(key, (this.chunkVersions.get(key) || 0) + 1);
+    }
+  }
 
   constructor() {
     this.createSpawnClearing();
@@ -24,6 +39,8 @@ export class AsteroidWorld {
    * Initializes the starting cavern so the ship has room to fly and immediate rocks to mine.
    */
   public createSpawnClearing() {
+    this.terrainEpoch++;
+    this.chunkVersions.clear();
     this.minedBlocks.clear();
     this.damagedBlocks.clear();
 
@@ -47,6 +64,8 @@ export class AsteroidWorld {
   }
 
   public deserialize(data: { mined?: string[]; damaged?: [string, number][] }) {
+    this.terrainEpoch++;
+    this.chunkVersions.clear();
     if (data.mined && Array.isArray(data.mined) && data.mined.length > 0) {
       this.minedBlocks = new Set(data.mined);
       // Guarantee spawn clearing is open
@@ -98,26 +117,29 @@ export class AsteroidWorld {
     let type: ResourceType = 'basalt';
     let baseHp = 10;
 
-    // Rich, colorful mineral progression with veins right from the start
-    const bonus = rareBoost * 0.08;
-    const clusterRoll = (noise + clusterNoise) * 0.5;
+    // Rare ores unlock in distance bands measured in grid blocks from spawn.
+    const bonus = Math.min(0.08, Math.max(0, rareBoost) * 0.04);
+    const clusterRoll = noise * 0.8 + clusterNoise * 0.2;
+    // Keep common-rock composition independent of the rare-vein roll.
+    const commonRoll = hash2D(gx + 92821, gy - 68917);
+    const quartzThreshold = dist < 15 ? 0.95 : 0.90;
 
-    if (dist > 100 && clusterRoll > 0.88 - bonus) {
+    if (dist >= 180 && clusterRoll > 0.94 - bonus) {
       type = 'sunstone';
       baseHp = 220 + Math.floor(dist * 1.2);
-    } else if ((dist > 40 && clusterRoll > 0.78 - bonus) || clusterRoll > 0.94 - bonus) {
-      // Early rare void ore sprinkles!
+    } else if (dist >= 100 && clusterRoll > 0.88 - bonus) {
+      // Void ore only appears beyond the deep-core boundary.
       type = 'voidOre';
       baseHp = 95 + Math.floor(dist * 0.8);
-    } else if (clusterRoll > 0.68 - bonus) {
-      // Plentiful glowing emeraldite
+    } else if (dist >= 45 && clusterRoll > 0.76 - bonus) {
+      // Emeraldite marks the first rare mineral zone.
       type = 'emeraldite';
       baseHp = 45 + Math.floor(dist * 0.5);
-    } else if (clusterRoll > 0.44 - bonus) {
-      // Abundant glowing cyan quartz
+    } else if (commonRoll > quartzThreshold) {
+      // Small quartz deposits near spawn, more frequent farther out.
       type = 'quartz';
       baseHp = 25 + Math.floor(dist * 0.35);
-    } else if (clusterRoll > 0.22) {
+    } else if (commonRoll > 0.70) {
       type = 'iron';
       baseHp = 14 + Math.floor(dist * 0.2);
     } else {
@@ -150,6 +172,7 @@ export class AsteroidWorld {
 
     if (newHp <= 0) {
       this.minedBlocks.add(key);
+      this.invalidateTerrain(gx, gy);
       this.damagedBlocks.delete(key);
       block.hp = 0;
       return { destroyed: true, block };

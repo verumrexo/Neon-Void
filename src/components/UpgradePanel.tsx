@@ -63,11 +63,11 @@ const UPGRADE_CONFIGS: UpgradeCardData[] = [
   },
   {
     key: 'droneBay',
-    title: 'Autonomous Drone Bay',
-    description: 'Assembles an agile micro-triangle drone that flies and mines independently.',
+    title: 'Shipyard',
+    description: 'Builds another full-size ship sharing your mining and movement upgrades.',
     icon: Cpu,
-    getCurrentValue: (lvl) => `${lvl} active drone${lvl === 1 ? '' : 's'}`,
-    getNextValue: (lvl) => `${lvl + 1} active drones`,
+    getCurrentValue: (lvl) => `${lvl} additional ship${lvl === 1 ? '' : 's'}`,
+    getNextValue: (lvl) => `${lvl + 1} additional ships`,
   },
 ];
 
@@ -82,7 +82,7 @@ export const UpgradePanel: React.FC = () => {
             Ship System Upgrades
           </h2>
           <p className="text-xs text-white/50">
-            Increase laser power, split beams across multiple targets, expand magnet collection, and deploy autonomous drone wings.
+            Increase laser power, split beams across multiple targets, expand magnet collection, and expand your mining fleet.
           </p>
         </div>
       </div>

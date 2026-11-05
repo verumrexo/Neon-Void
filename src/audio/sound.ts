@@ -9,6 +9,7 @@ class SoundEngine {
   private isMuted: boolean = false;
   private volume: number = 0.35;
   private lastChimeTime: number = 0;
+  private lastLaserTime = 0;
 
   // Soothing pentatonic scale frequencies
   private readonly scale = [
@@ -86,6 +87,9 @@ class SoundEngine {
    */
   public playLaserHit() {
     if (this.isMuted) return;
+    const timestamp = performance.now();
+    if (timestamp - this.lastLaserTime < 80) return;
+    this.lastLaserTime = timestamp;
     this.initCtx();
     if (!this.ctx || !this.masterGain) return;
 

@@ -1,3 +1,4 @@
+import type { ShipPhysicsState } from '../engine/physics';
 export type ResourceType = 
   | 'basalt' 
   | 'iron' 
@@ -103,19 +104,8 @@ export interface DroppedMineral {
   rotationSpeed: number;
 }
 
-export interface Drone {
+export interface FleetShip extends ShipPhysicsState {
   id: string;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  angle: number;
-  targetBlock: { x: number; y: number } | null;
-  beamActive: boolean;
-  color: string;
-  wanderAngle: number;
-  wanderTimer: number;
-  hoverAngle: number;
 }
 
 export interface Particle {

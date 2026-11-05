@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { GameProvider, useGame } from './state/gameContext';
 import { GameCanvas } from './components/GameCanvas';
 import { TopBar } from './components/TopBar';
@@ -17,9 +17,9 @@ import { RESOURCE_DEFINITIONS, ResourceType } from './types/game';
 type ActiveTab = 'upgrades' | 'crafting' | 'quantum' | 'stats' | null;
 
 const MainContent: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<ActiveTab>(null);
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => window.innerWidth >= 1024 ? 'upgrades' : null);
   const [isDrawerCollapsed, setIsDrawerCollapsed] = useState<boolean>(false);
-  const { offlineEarnings, clearOfflineNotification, availableStardustOnPrestige } = useGame();
+  const { offlineEarnings, clearOfflineNotification, availableStardustOnPrestige, drones, currentDps, hasManualTarget } = useGame();
 
   const handleTabSelect = (tab: 'upgrades' | 'crafting' | 'quantum' | 'stats') => {
     if (activeTab === tab && !isDrawerCollapsed) {
@@ -30,6 +30,26 @@ const MainContent: React.FC = () => {
       setIsDrawerCollapsed(false);
     }
   };
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.repeat || event.ctrlKey || event.metaKey || event.altKey ||
+          (event.target instanceof HTMLElement && /INPUT|TEXTAREA|SELECT/.test(event.target.tagName))) return;
+      const tabs = ['upgrades', 'crafting', 'quantum', 'stats'] as const;
+      const index = Number(event.key) - 1;
+      if (index >= 0 && index < tabs.length) {
+        setActiveTab(current => current === tabs[index] ? null : tabs[index]);
+        setIsDrawerCollapsed(false);
+      }
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        setActiveTab(current => current ? null : 'upgrades');
+        setIsDrawerCollapsed(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   return (
     <div className="relative w-screen h-screen flex flex-col bg-[#050508] text-white overflow-hidden select-none">
@@ -43,10 +63,17 @@ const MainContent: React.FC = () => {
       />
 
       {/* Main Viewport Container */}
-      <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
+      <div className="game-workspace relative flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Fullscreen Interactive Game Canvas */}
-        <div className="relative flex-1 w-full h-full pb-14 md:pb-0">
+        <div className="flight-viewport relative flex-1 w-full h-full pb-14 md:pb-0">
           <GameCanvas />
+          <div className="flight-label hidden md:flex"><span className="status-dot" /> mining sector <span className="text-white/30">/ live</span></div>
+          <div className="flight-status hidden md:flex">
+            <span><b>{drones.length + 1}</b> ships online</span>
+            <span><b>{currentDps}</b> dps / ship</span>
+            <span className="ml-auto">{hasManualTarget ? 'manual navigation' : 'mining active'}</span>
+          </div>
+          <div className="flight-help hidden md:flex"><span>click <b>fly until blocked</b></span><span>hold <b>steer</b></span><span>esc <b>stop</b></span><span>tab <b>toggle panel</b></span></div>
         </div>
 
         {/* Offline Earnings Toast */}
@@ -91,13 +118,13 @@ const MainContent: React.FC = () => {
         {/* Docked Drawer Container (Responsive Bottom Sheet on Mobile) */}
         {activeTab && (
           <div
-            className={`absolute z-30 inset-x-0 flex flex-col border-t border-white/10 bg-[#070a12]/95 backdrop-blur-2xl transition-all duration-300 ease-in-out shadow-2xl ${
+            className={`system-panel absolute z-30 inset-x-0 flex flex-col border-t border-white/10 bg-[#070a12]/95 backdrop-blur-2xl transition-all duration-300 ease-in-out shadow-2xl ${
               // Mobile: sits above bottom navigation dock (bottom-14)
               // Desktop: sits at bottom-0
               'bottom-14 md:bottom-0'
             } ${
               isDrawerCollapsed
-                ? 'h-10 translate-y-0'
+                ? 'panel-collapsed h-10 translate-y-0'
                 : 'h-[52vh] max-h-[580px] min-h-[280px] rounded-t-2xl md:rounded-t-none'
             }`}
           >
@@ -115,10 +142,10 @@ const MainContent: React.FC = () => {
                 <div className="flex items-center gap-2.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-[#00f0ff]" />
                   <span className="text-xs font-bold tracking-wider uppercase text-white/90 font-mono">
-                    {activeTab === 'upgrades' && 'Ship Systems Upgrades'}
-                    {activeTab === 'crafting' && 'Gear & Hull Modification Assembly'}
-                    {activeTab === 'quantum' && 'Quantum Singularity Matrix'}
-                    {activeTab === 'stats' && 'Mission Telemetry & Audio'}
+                    {activeTab === 'upgrades' && 'ship systems'}
+                    {activeTab === 'crafting' && 'crafting bay'}
+                    {activeTab === 'quantum' && 'singularity'}
+                    {activeTab === 'stats' && 'telemetry & audio'}
                   </span>
                 </div>
 
@@ -147,7 +174,7 @@ const MainContent: React.FC = () => {
 
             {/* Scrollable Drawer Content */}
             {!isDrawerCollapsed && (
-              <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 md:p-4">
+              <div className="system-panel-content flex-1 overflow-y-auto overflow-x-hidden p-2 md:p-4">
                 {activeTab === 'upgrades' && <UpgradePanel />}
                 {activeTab === 'crafting' && <CraftingPanel />}
                 {activeTab === 'quantum' && <QuantumTree />}
