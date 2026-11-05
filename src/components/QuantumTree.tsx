@@ -158,7 +158,10 @@ export const QuantumTree: React.FC = () => {
 
       {/* Quantum Perk Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {filteredPerks.map((perk) => {
+        {[...filteredPerks].sort((a, b) => {
+          const rank = (perk: typeof a) => perk.level >= perk.maxLevel ? -1 : resources.stardust >= Math.floor(perk.cost * Math.pow(perk.costMultiplier, perk.level)) ? 1 : 0;
+          return rank(b) - rank(a);
+        }).map((perk) => {
           const currentCost = Math.floor(perk.cost * Math.pow(perk.costMultiplier, perk.level));
           const isMax = perk.level >= perk.maxLevel;
           const canAfford = !isMax && resources.stardust >= currentCost;
@@ -186,7 +189,7 @@ export const QuantumTree: React.FC = () => {
                   </span>
                 </div>
 
-                <p className="text-xs text-white/60 mb-3">{perk.description}</p>
+                <p className="text-xs text-white/60 mb-3">{perk.description}{perk.id === 'exotic_vein_finder' && <span className="block mt-1 text-[#00f0ff]">Current ore chance bonus: +{perk.level * 20}%. Persists after singularity. Rare ores still unlock at depth.</span>}</p>
               </div>
 
               <div className="flex items-center justify-between pt-3 border-t border-white/5">

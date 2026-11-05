@@ -20,7 +20,10 @@ export const CraftingPanel: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-        {craftingItems.map((item) => {
+        {[...craftingItems].sort((a, b) => {
+          const rank = (item: typeof a) => item.crafted ? -1 : Object.entries(item.cost).every(([key, amount]) => resources[key as keyof typeof resources] >= (amount || 0)) ? 1 : 0;
+          return rank(b) - rank(a);
+        }).map((item) => {
           let canAfford = true;
           for (const [res, amt] of Object.entries(item.cost)) {
             if ((resources[res as ResourceType] || 0) < (amt || 0)) {

@@ -37,3 +37,21 @@ test('rapid mining cannot create unbounded visual effects', () => {
   assert.equal(particles.particles.length, 0);
   assert.equal(particles.floatingTexts.length, 0);
 });
+
+test('harmonizer boosts early quartz and rare ores without bypassing depth locks', () => {
+  const world = new AsteroidWorld();
+  const counts = (boost: number, min: number, max: number) => {
+    const result: Record<string, number> = {};
+    for(let y=-max;y<=max;y++) for(let x=-max;x<=max;x++) {
+      const distance=Math.hypot(x,y);if(distance<min || distance>=max) continue;
+      const block=world.getBlock(x,y,boost);if(block)result[block.type]=(result[block.type]||0)+1;
+    }
+    return result;
+  };
+  const early=counts(0,3,15), boosted=counts(0.2,3,15);
+  assert(boosted.quartz>early.quartz);
+  const deep=counts(0,180,220), upgraded=counts(0.2,180,220);
+  for(const ore of ['emeraldite','voidOre','sunstone']) assert(upgraded[ore]>deep[ore]);
+  const shallow=counts(2,3,45);
+  assert(!shallow.emeraldite && !shallow.voidOre && !shallow.sunstone);
+});

@@ -80,7 +80,10 @@ export const UpgradePanel: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-        {UPGRADE_CONFIGS.map((config) => {
+        {[...UPGRADE_CONFIGS].sort((a, b) => {
+          const affordable = (key: keyof UpgradesState) => { const cost = getUpgradeCost(key); return resources[cost.resource] >= cost.amount ? 1 : 0; };
+          return affordable(b.key) - affordable(a.key);
+        }).map((config) => {
           const currentLvl = upgrades[config.key];
           const costInfo = getUpgradeCost(config.key);
           const resDef = RESOURCE_DEFINITIONS[costInfo.resource];

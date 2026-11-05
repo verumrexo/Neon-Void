@@ -12,6 +12,13 @@ export function getRingHardness(ring: number): number { return Math.pow(1.2, get
 export const DEPTH_COLORS = ['#475569', '#476b68', '#526185', '#756087', '#8a6653', '#8a5361'];
 export function getDepthColor(ring: number): string { return DEPTH_COLORS[getDepthBand(ring) % DEPTH_COLORS.length]; }
 
+// Exact upper-tail probabilities for the existing 80/20 clustered noise.
+export function boostedVeinThreshold(threshold: number, boost: number): number {
+  const chance = threshold >= 0.8 ? (1 - threshold) ** 2 / 0.32 : (0.9 - threshold) / 0.8;
+  const boosted = Math.min(0.85, chance * (1 + Math.max(0, boost)));
+  return boosted <= 0.125 ? 1 - Math.sqrt(boosted * 0.32) : 0.9 - boosted * 0.8;
+}
+
 // Fast deterministic pseudo-random hash for procedural grid generation
 function hash2D(x: number, y: number): number {
   let h = Math.imul(x, 374761393) + Math.imul(y, 668265263);
@@ -137,20 +144,20 @@ export class AsteroidWorld {
     let baseHp = 10;
 
     // Rare ores unlock in distance bands measured in grid blocks from spawn.
-    const bonus = Math.min(0.08, Math.max(0, rareBoost) * 0.04);
+
     const clusterRoll = noise * 0.8 + clusterNoise * 0.2;
     // Keep common-rock composition independent of the rare-vein roll.
     const commonRoll = hash2D(gx + 92821, gy - 68917);
-    const quartzThreshold = dist < 15 ? 0.95 : 0.90;
+    const quartzThreshold = 1 - Math.min(0.4, (dist < 15 ? 0.05 : 0.10) * (1 + Math.max(0, rareBoost)));
 
-    if (dist >= 180 && clusterRoll > 0.94 - bonus) {
+    if (dist >= 180 && clusterRoll > boostedVeinThreshold(0.94, rareBoost)) {
       type = 'sunstone';
       baseHp = 220;
-    } else if (dist >= 100 && clusterRoll > 0.88 - bonus) {
+    } else if (dist >= 100 && clusterRoll > boostedVeinThreshold(0.88, rareBoost)) {
       // Void ore only appears beyond the deep-core boundary.
       type = 'voidOre';
       baseHp = 95;
-    } else if (dist >= 45 && clusterRoll > 0.76 - bonus) {
+    } else if (dist >= 45 && clusterRoll > boostedVeinThreshold(0.76, rareBoost)) {
       // Emeraldite marks the first rare mineral zone.
       type = 'emeraldite';
       baseHp = 45;
