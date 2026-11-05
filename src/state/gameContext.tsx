@@ -565,6 +565,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let uiTimer = 0;
     let damageTimer = 0;
     const rareBoost = getRareBoost(craftingItems, quantumPerks);
+    const harmonizerLevel = quantumPerks.find(perk => perk.id === 'exotic_vein_finder')?.level || 0;
+    const oreDepthFactor = 1 - Math.min(0.3, harmonizerLevel * 0.05);
     const baseDps = calculateDps(upgrades, craftingItems, quantumPerks);
     let speed = 1 + (upgrades.flightSpeed - 1) * 0.12;
     let beams = upgrades.beamCount + (quantumPerks.find(perk => perk.id === 'multi_beam_mastery')?.level || 0);
@@ -607,7 +609,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     const unsubscribe = gameFrames.subscribeUpdate(step => {
       uiTimer += step; damageTimer += step;
-      if (world.rareBoost !== rareBoost) { world.rareBoost = rareBoost; world.terrainEpoch++; }
+      if (world.rareBoost !== rareBoost || world.oreDepthFactor !== oreDepthFactor) {
+        world.rareBoost = rareBoost; world.oreDepthFactor = oreDepthFactor; world.terrainEpoch++;
+      }
       sectorEpoch = world.terrainEpoch;
       const destroyed = ringEngineRef.current.update(fleet, world, step,
         baseDps, range, beams, speed);

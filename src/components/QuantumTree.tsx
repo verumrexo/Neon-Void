@@ -189,7 +189,7 @@ export const QuantumTree: React.FC = () => {
                   </span>
                 </div>
 
-                <p className="text-xs text-white/60 mb-3">{perk.description}{perk.id === 'exotic_vein_finder' && <span className="block mt-1 text-[#00f0ff]">Current ore chance bonus: +{perk.level * 20}%. Persists after singularity. Rare ores still unlock at depth.</span>}</p>
+                <p className="text-xs text-white/60 mb-3">{perk.description}{perk.id === 'exotic_vein_finder' && <span className="block mt-1 text-[#00f0ff]">Current ore chance bonus: +{perk.level * 20}%. Persists after singularity. Rare ores start {Math.min(30, perk.level * 5)}% closer (5% per level, capped at 30%).</span>}</p>
               </div>
 
               <div className="flex items-center justify-between pt-3 border-t border-white/5">

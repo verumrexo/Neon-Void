@@ -35,6 +35,7 @@ export class AsteroidWorld {
   public terrainEpoch = 0;
   public sectorEpoch = 0;
   public rareBoost = 0;
+  public oreDepthFactor = 1;
   private chunkVersions = new Map<number, Map<string, number>>();
 
   public getChunkVersion(cx: number, cy: number, detail = 1): number {
@@ -150,14 +151,14 @@ export class AsteroidWorld {
     const commonRoll = hash2D(gx + 92821, gy - 68917);
     const quartzThreshold = 1 - Math.min(0.4, (dist < 15 ? 0.05 : 0.10) * (1 + Math.max(0, rareBoost)));
 
-    if (dist >= 180 && clusterRoll > boostedVeinThreshold(0.94, rareBoost)) {
+    if (dist >= 180 * this.oreDepthFactor && clusterRoll > boostedVeinThreshold(0.94, rareBoost)) {
       type = 'sunstone';
       baseHp = 220;
-    } else if (dist >= 100 && clusterRoll > boostedVeinThreshold(0.88, rareBoost)) {
+    } else if (dist >= 100 * this.oreDepthFactor && clusterRoll > boostedVeinThreshold(0.88, rareBoost)) {
       // Void ore only appears beyond the deep-core boundary.
       type = 'voidOre';
       baseHp = 95;
-    } else if (dist >= 45 && clusterRoll > boostedVeinThreshold(0.76, rareBoost)) {
+    } else if (dist >= 45 * this.oreDepthFactor && clusterRoll > boostedVeinThreshold(0.76, rareBoost)) {
       // Emeraldite marks the first rare mineral zone.
       type = 'emeraldite';
       baseHp = 45;

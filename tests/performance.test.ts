@@ -55,3 +55,20 @@ test('harmonizer boosts early quartz and rare ores without bypassing depth locks
   const shallow=counts(2,3,45);
   assert(!shallow.emeraldite && !shallow.voidOre && !shallow.sunstone);
 });
+
+test('harmonizer depth bonus brings ores closer without changing unupgraded depths', () => {
+  const world = new AsteroidWorld();
+  assert.equal(world.oreDepthFactor, 1);
+  for (let y=-44;y<=44;y++) for(let x=-44;x<=44;x++) {
+    if(Math.hypot(x,y)<45) assert.notEqual(world.getBlock(x,y)?.type,'emeraldite');
+  }
+  world.oreDepthFactor=0.95;
+  let emerald=0;
+  for(let y=-44;y<=44;y++) for(let x=-44;x<=44;x++) {
+    const distance=Math.hypot(x,y);
+    const type=world.getBlock(x,y)?.type;
+    if(distance>=42.75 && distance<45 && type==='emeraldite') emerald++;
+    if(distance<42.75) assert.notEqual(type,'emeraldite');
+  }
+  assert(emerald>0);
+});
