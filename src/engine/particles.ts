@@ -8,8 +8,8 @@ export class ParticleSystem {
    * Spawns a spray of neon sparks when the laser hits a block.
    */
   public spawnLaserHitSparks(x: number, y: number, color: string, glow: string, count: number = 3) {
-    if (this.particles.length > 250) return; // Cap for silky 60fps performance
-    for (let i = 0; i < count; i++) {
+    if (this.particles.length >= 180) return; // Cap for silky 60fps performance
+    for (let i = 0; i < Math.min(count, 180 - this.particles.length); i++) {
       const angle = Math.random() * Math.PI * 2;
       const speed = 25 + Math.random() * 55;
       this.particles.push({
@@ -32,7 +32,7 @@ export class ParticleSystem {
    * Spawns a subtle glowing thruster ember behind the ship while flying.
    */
   public spawnThrusterMote(x: number, y: number, angle: number) {
-    if (this.particles.length > 250) return;
+    if (this.particles.length >= 180) return;
     const spread = (Math.random() - 0.5) * 0.4;
     const speed = 15 + Math.random() * 25;
     this.particles.push({
@@ -78,6 +78,7 @@ export class ParticleSystem {
    * Spawns floating resource count text (e.g. "+1 Quartz", "+12 Basalt").
    */
   public spawnFloatingText(x: number, y: number, text: string, color: string) {
+    if (this.floatingTexts.length >= 24) return;
     this.floatingTexts.push({
       id: `${Date.now()}-${Math.random()}`,
       x,
@@ -103,8 +104,9 @@ export class ParticleSystem {
         continue;
       }
 
-      p.vx *= 0.92;
-      p.vy *= 0.92;
+      const friction = Math.pow(0.92, dt * 30);
+      p.vx *= friction;
+      p.vy *= friction;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
 

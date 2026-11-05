@@ -1,6 +1,7 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { useGame } from '../state/gameContext';
 import { BLOCK_SIZE, CHUNK_SIZE, getRingNumber, getDepthBand, getDepthColor } from '../engine/world';
+import { gameFrames } from '../engine/frameClock';
 import { particleSystem } from '../engine/particles';
 
 export const GameCanvas: React.FC = () => {
@@ -16,10 +17,13 @@ export const GameCanvas: React.FC = () => {
     ringProgress,
   } = useGame();
 
+  const sceneRef = useRef({ ship, drones, craftingItems });
+  sceneRef.current = { ship, drones, craftingItems };
+
   // Camera coordinates and zoom (world space)
   const cameraRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const zoomRef = useRef<number>(1.0);
-  const [dimensions, setDimensions] = useState<{ width: number; height: number }>({
+  const dimensionsRef = useRef({
     width: typeof window !== 'undefined' ? window.innerWidth : 1200,
     height: typeof window !== 'undefined' ? window.innerHeight : 800,
   });
@@ -30,7 +34,7 @@ export const GameCanvas: React.FC = () => {
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
         if (rect.width > 20 && rect.height > 20) {
-          setDimensions({ width: rect.width, height: rect.height });
+          dimensionsRef.current = { width: rect.width, height: rect.height };
         }
       }
     };
@@ -59,7 +63,6 @@ export const GameCanvas: React.FC = () => {
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
 
-    let animId: number;
     // Bake mineral glows once, rather than running thousands of shadow filters per frame.
     const tiles = new Map<string, HTMLCanvasElement>();
     const chunks = new Map<string, { canvas: HTMLCanvasElement; version: number; epoch: number }>();
@@ -68,8 +71,16 @@ export const GameCanvas: React.FC = () => {
     let sampleFrames = 0;
     let renderScale = Math.min(1.25, window.devicePixelRatio || 1);
     let slowSamples = 0;
-    const render = () => {
-      const frameTime = performance.now();
+    const render = (frameTime: number, alpha: number, elapsed: number) => {
+      const { ship: mainShip, drones: companions, craftingItems } = sceneRef.current;
+      const fleet = [mainShip, ...companions].map(state => ({ ...state,
+        x: state.previousX + (state.x - state.previousX) * alpha,
+        y: state.previousY + (state.y - state.previousY) * alpha,
+        angle: state.previousAngle + (state.angle - state.previousAngle) * alpha,
+      }));
+      const ship = fleet[0];
+      const drones = fleet.slice(1);
+      if (elapsed === 0) { sampleStart = frameTime; sampleFrames = 0; }
       sampleFrames++;
       if (frameTime - sampleStart >= 1000) {
         const fps = Math.round(sampleFrames * 1000 / (frameTime - sampleStart));
@@ -82,12 +93,8 @@ export const GameCanvas: React.FC = () => {
         sampleStart = frameTime;
         sampleFrames = 0;
       }
-      // Read current canvas physical pixel dimensions directly from DOM
-      const domW = canvas.clientWidth || (containerRef.current ? containerRef.current.clientWidth : 0);
-      const domH = canvas.clientHeight || (containerRef.current ? containerRef.current.clientHeight : 0);
-
-      const width = domW > 20 ? domW : dimensions.width > 20 ? dimensions.width : window.innerWidth;
-      const height = domH > 20 ? domH : dimensions.height > 20 ? dimensions.height : window.innerHeight;
+      // ResizeObserver owns layout reads; the hot path only reads cached dimensions.
+      const { width, height } = dimensionsRef.current;
       // Keep fullscreen retina rendering inside a practical pixel budget.
       const dpr = Math.min(renderScale, Math.sqrt(1_600_000 / (width * height)));
 
@@ -115,8 +122,6 @@ export const GameCanvas: React.FC = () => {
       let maxX = validShipX;
       let minY = validShipY;
       let maxY = validShipY;
-      let droneSumX = 0;
-      let droneSumY = 0;
       let activeDroneCount = 0;
 
       drones.forEach((d) => {
@@ -125,8 +130,6 @@ export const GameCanvas: React.FC = () => {
           maxX = Math.max(maxX, d.x);
           minY = Math.min(minY, d.y);
           maxY = Math.max(maxY, d.y);
-          droneSumX += d.x;
-          droneSumY += d.y;
           activeDroneCount++;
         }
       });
@@ -134,14 +137,14 @@ export const GameCanvas: React.FC = () => {
       // Frame all ships equally around their shared bounds.
       const targetCamX = (minX + maxX) / 2;
       const targetCamY = (minY + maxY) / 2;
-      cameraRef.current.x += (targetCamX - cameraRef.current.x) * 0.12;
-      cameraRef.current.y += (targetCamY - cameraRef.current.y) * 0.12;
+      cameraRef.current.x += (targetCamX - cameraRef.current.x) * (1 - Math.exp(-7.6 * elapsed));
+      cameraRef.current.y += (targetCamY - cameraRef.current.y) * (1 - Math.exp(-7.6 * elapsed));
       const fleetZoom = activeDroneCount > 0 ? 1 / Math.sqrt(1 + activeDroneCount * 0.35) : 1;
       // Account for camera smoothing so an outlying ship stays inside the view.
       const extentX = Math.max(maxX - cameraRef.current.x, cameraRef.current.x - minX) + 65;
       const extentY = Math.max(maxY - cameraRef.current.y, cameraRef.current.y - minY) + 65;
       const desiredZoom = Math.min(fleetZoom, width / (extentX * 2), height / (extentY * 2));
-      zoomRef.current = Math.min(desiredZoom, zoomRef.current + (desiredZoom - zoomRef.current) * 0.05);
+      zoomRef.current = Math.min(desiredZoom, zoomRef.current + (desiredZoom - zoomRef.current) * (1 - Math.exp(-3 * elapsed)));
       const zoom = zoomRef.current;
       const camX = cameraRef.current.x;
       const camY = cameraRef.current.y;
@@ -166,53 +169,56 @@ export const GameCanvas: React.FC = () => {
       const minGy = Math.floor((camY - viewRadiusH) / BLOCK_SIZE);
       const maxGy = Math.ceil((camY + viewRadiusH) / BLOCK_SIZE);
 
-      // 1. Draw subtle grid crosses in carved-out cavern air space
+      // One grid draw; skip subpixel details when the fleet view zooms out.
+      const gridStep = Math.max(1, Math.ceil(0.65 / zoom));
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
       ctx.lineWidth = 1;
-      for (let gy = minGy; gy <= maxGy; gy++) {
-        for (let gx = minGx; gx <= maxGx; gx++) {
-          if (world.isMined(gx, gy)) {
-            const vx = gx * BLOCK_SIZE;
-            const vy = gy * BLOCK_SIZE;
-            // Draw small vertex cross
-            ctx.beginPath();
-            ctx.moveTo(vx - 2, vy);
-            ctx.lineTo(vx + 2, vy);
-            ctx.moveTo(vx, vy - 2);
-            ctx.lineTo(vx, vy + 2);
-            ctx.stroke();
-          }
+      ctx.beginPath();
+      for (let gy = Math.floor(minGy / gridStep) * gridStep; gy <= maxGy; gy += gridStep) {
+        for (let gx = Math.floor(minGx / gridStep) * gridStep; gx <= maxGx; gx += gridStep) {
+          if (!world.isMined(gx, gy)) continue;
+          const x = gx * BLOCK_SIZE, y = gy * BLOCK_SIZE;
+          ctx.moveTo(x - 2, y); ctx.lineTo(x + 2, y);
+          ctx.moveTo(x, y - 2); ctx.lineTo(x, y + 2);
         }
       }
+      ctx.stroke();
 
-      // Rasterize static terrain in bounded chunks. Each frame composites a few images.
-      for (let cy = Math.floor(minGy / CHUNK_SIZE); cy <= Math.floor(maxGy / CHUNK_SIZE); cy++) {
-        for (let cx = Math.floor(minGx / CHUNK_SIZE); cx <= Math.floor(maxGx / CHUNK_SIZE); cx++) {
-          const key = `${cx},${cy}`;
-          const version = world.getChunkVersion(cx, cy);
+      // Wide fleet views use an overview texture instead of allocating hundreds of canvases.
+      const chunkBudget = width < 768 ? 32 : 64;
+      let detail = 1;
+      while ((Math.ceil((maxGx - minGx + 1) / (CHUNK_SIZE * detail)) + 2) *
+          (Math.ceil((maxGy - minGy + 1) / (CHUNK_SIZE * detail)) + 2) > chunkBudget) detail *= 2;
+      const chunkCells = CHUNK_SIZE * detail;
+      for (let cy = Math.floor(minGy / chunkCells); cy <= Math.floor(maxGy / chunkCells); cy++) {
+        for (let cx = Math.floor(minGx / chunkCells); cx <= Math.floor(maxGx / chunkCells); cx++) {
+          const key = `${detail}:${cx},${cy}`;
+          const version = world.getChunkVersion(cx, cy, detail);
           let chunk = chunks.get(key);
           if (!chunk || chunk.version !== version || chunk.epoch !== world.terrainEpoch) {
             const image = chunk?.canvas || document.createElement('canvas');
             image.width = image.height = CHUNK_SIZE * BLOCK_SIZE + 24;
             const context = image.getContext('2d')!;
-            context.translate(12 - cx * CHUNK_SIZE * BLOCK_SIZE, 12 - cy * CHUNK_SIZE * BLOCK_SIZE);
+            context.scale(1 / detail, 1 / detail);
+            context.translate(12 * detail - cx * chunkCells * BLOCK_SIZE, 12 * detail - cy * chunkCells * BLOCK_SIZE);
             {
               const ctx = context;
       // 2. Draw Asteroid Blocks with high-contrast visible wireframes & vibrant gems
-      for (let gy = cy * CHUNK_SIZE; gy < (cy + 1) * CHUNK_SIZE; gy++) {
-        for (let gx = cx * CHUNK_SIZE; gx < (cx + 1) * CHUNK_SIZE; gx++) {
-          if (world.isMined(gx, gy)) continue;
+      for (let gy = cy * chunkCells; gy < (cy + 1) * chunkCells; gy += detail) {
+        for (let gx = cx * chunkCells; gx < (cx + 1) * chunkCells; gx += detail) {
+          const sourceX = gx + Math.floor(detail / 2), sourceY = gy + Math.floor(detail / 2);
+          if (world.isMined(sourceX, sourceY)) continue;
 
-          const block = world.getBlock(gx, gy);
+          const block = world.getBlock(sourceX, sourceY);
           if (!block) continue;
 
           const bx = gx * BLOCK_SIZE;
           const by = gy * BLOCK_SIZE;
-          const isSurface = world.isSurfaceBlock(gx, gy);
+          const isSurface = world.isSurfaceBlock(sourceX, sourceY);
 
-          const ring = getRingNumber(gx, gy);
+          const ring = getRingNumber(sourceX, sourceY);
           const band = getDepthBand(ring);
-          const tileKey = `${block.type}:${isSurface}:${band}`;
+          const tileKey = `${block.type}:${isSurface}:${band % 6}:${Math.min(4, 1 + Math.floor(band / 6))}`;
           let tile = tiles.get(tileKey);
           if (!tile) {
             tile = document.createElement('canvas');
@@ -331,7 +337,7 @@ export const GameCanvas: React.FC = () => {
             }
             tiles.set(tileKey, tile);
           }
-          ctx.drawImage(tile, bx - 12, by - 12);
+          ctx.drawImage(tile, bx - 12 * detail, by - 12 * detail, tile.width * detail, tile.height * detail);
 
         }
       }
@@ -339,17 +345,13 @@ export const GameCanvas: React.FC = () => {
             chunk = { canvas: image, version, epoch: world.terrainEpoch };
             chunks.set(key, chunk);
           }
-          ctx.drawImage(chunk.canvas, cx * CHUNK_SIZE * BLOCK_SIZE - 12, cy * CHUNK_SIZE * BLOCK_SIZE - 12);
+          ctx.drawImage(chunk.canvas, cx * chunkCells * BLOCK_SIZE - 12 * detail,
+            cy * chunkCells * BLOCK_SIZE - 12 * detail, chunk.canvas.width * detail, chunk.canvas.height * detail);
+          // Touch the entry so the LRU limit also holds when every visible chunk is new.
+          chunks.delete(key); chunks.set(key, chunk);
         }
       }
-      // Keep the cache bounded when exploring an infinite world.
-      if (chunks.size > 96) {
-        for (const key of chunks.keys()) {
-          const [cx, cy] = key.split(',').map(Number);
-          if (cx < Math.floor(minGx / CHUNK_SIZE) - 1 || cx > Math.floor(maxGx / CHUNK_SIZE) + 1 ||
-              cy < Math.floor(minGy / CHUNK_SIZE) - 1 || cy > Math.floor(maxGy / CHUNK_SIZE) + 1) chunks.delete(key);
-        }
-      }
+      while (chunks.size > chunkBudget * 1.5) chunks.delete(chunks.keys().next().value!);
       for (const [key] of world.damagedBlocks) {
         const [gx, gy] = key.split(',').map(Number);
         if (gx < minGx || gx > maxGx || gy < minGy || gy > maxGy) continue;
@@ -403,7 +405,7 @@ export const GameCanvas: React.FC = () => {
       particleSystem.render(ctx);
 
       // Spawn soft thruster embers behind the ship while moving
-      if (Math.hypot(ship.vx, ship.vy) > 12 && Math.random() > 0.4) {
+      if (Math.hypot(ship.vx, ship.vy) > 12 && Math.random() < Math.min(1, elapsed * 36)) {
         const nozzleX = validShipX - Math.cos(ship.angle) * 9;
         const nozzleY = validShipY - Math.sin(ship.angle) * 9;
         particleSystem.spawnThrusterMote(nozzleX, nozzleY, ship.angle);
@@ -490,19 +492,17 @@ export const GameCanvas: React.FC = () => {
       ctx.restore(); // Restore world camera transform
       ctx.restore(); // Restore DPR transform
 
-      animId = requestAnimationFrame(render);
     };
 
-    animId = requestAnimationFrame(render);
-    return () => cancelAnimationFrame(animId);
-  }, [dimensions, ship, drones, world, craftingItems]);
+    return gameFrames.subscribeRender(render);
+  }, [world]);
 
   return (
     <div ref={containerRef} className="relative w-full h-full min-h-[300px] overflow-hidden">
       <div ref={fpsRef} className="absolute top-5 right-6 z-10 pointer-events-none text-[10px] font-mono text-white/50 tabular-nums" aria-label="Frames per second">measuring fps</div>
       <div className="absolute left-4 bottom-4 z-10 pointer-events-none rounded-lg border border-white/10 bg-[#090d15]/90 px-3 py-2 text-[11px] font-mono">
         <span className="text-[#00f0ff]">ring {ringProgress.ring}</span>
-        <span className="text-white/50"> · {Math.max(0, ringProgress.total - ringProgress.remaining)}/{ringProgress.total} cleared</span>
+        <span className="text-white/50"> · continuous sweep</span>
         <div className="mt-1 text-[10px] text-white/40">stratum {getDepthBand(ringProgress.ring) + 1} · {Math.pow(1.2, getDepthBand(ringProgress.ring)).toFixed(2)}× rock hp · +20% / 5 rings</div>
       </div>
       <canvas

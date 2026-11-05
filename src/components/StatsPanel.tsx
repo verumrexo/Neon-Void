@@ -1,25 +1,11 @@
 import React, { useState } from 'react';
 import { useGame } from '../state/gameContext';
 import { RESOURCE_DEFINITIONS, ResourceType } from '../types/game';
-import { sound } from '../audio/sound';
-import { Volume2, VolumeX, RotateCcw, Compass, BarChart3, Info } from 'lucide-react';
+import { RotateCcw, Compass, BarChart3, Info } from 'lucide-react';
 
 export const StatsPanel: React.FC = () => {
   const { stats, resetAllProgress } = useGame();
-  const [volume, setVolume] = useState<number>(sound.getVolume());
-  const [muted, setMuted] = useState<boolean>(sound.getMuted());
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
-
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseFloat(e.target.value);
-    setVolume(val);
-    sound.setVolume(val);
-  };
-
-  const handleToggleMute = () => {
-    const isNowMuted = sound.toggleMute();
-    setMuted(isNowMuted);
-  };
 
   const resourceKeys: ResourceType[] = ['basalt', 'iron', 'quartz', 'emeraldite', 'voidOre', 'sunstone', 'stardust'];
 
@@ -29,10 +15,10 @@ export const StatsPanel: React.FC = () => {
       <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
         <div>
           <h2 className="text-sm sm:text-base font-bold text-white tracking-wide uppercase font-mono">
-            Mission Telemetry & Audio
+            Mission Telemetry
           </h2>
           <p className="text-xs text-white/50">
-            Historical extraction statistics, synthesizer controls, and system calibration.
+            Historical extraction statistics and sector progression.
           </p>
         </div>
       </div>
@@ -104,53 +90,10 @@ export const StatsPanel: React.FC = () => {
         </div>
       </div>
 
-      {/* Audio & Synthesizer Controls */}
-      <div className="p-4 rounded border border-white/10 bg-[#090b10] space-y-4">
-        <h3 className="text-xs font-bold font-mono uppercase tracking-wider text-white/70">
-          Synthesizer & Audio Calibration
-        </h3>
-
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handleToggleMute}
-              className="p-2 rounded border border-white/10 bg-white/5 text-white hover:bg-white/10 transition-colors"
-            >
-              {muted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-[#00f0ff]" />}
-            </button>
-            <div className="text-xs">
-              <div className="font-semibold text-white">{muted ? 'Audio Muted' : 'Sound Synthesizer Active'}</div>
-              <div className="text-white/50">Procedural pentatonic chimes & pulse acoustics</div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3 w-full sm:w-60">
-            <span className="text-xs font-mono text-white/50">Vol:</span>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              value={volume}
-              onChange={handleVolumeChange}
-              className="w-full accent-[#00f0ff] cursor-pointer"
-            />
-            <span className="text-xs font-mono text-white/70 tabular-nums w-8">
-              {Math.round(volume * 100)}%
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Flight & Navigation Guide */}
       <div className="p-4 rounded border border-white/10 bg-[#090b10] text-xs text-white/60 space-y-2">
-        <h3 className="font-bold font-mono uppercase tracking-wider text-white/80">Flight & Guidance Principles</h3>
-        <p>
-          • <strong>Organic Idle Flight:</strong> The ship cruises like a gentle space bumblebee, naturally sweeping the outer surface blocks of the asteroid. Attack and laser extraction happen automatically.
-        </p>
-        <p>
-          • <strong>Optional Cavern Carving:</strong> If you want to delve deep into the asteroid, simply click, tap, or drag anywhere on the canvas. The ship will steer toward your beacon, boring infinite tunnels through the core.
-        </p>
+        <h3 className="font-bold font-mono uppercase tracking-wider text-white/80">Circular Foraging</h3>
+        <p>Ships drift around spawn like bees, gradually exploring outward. Their directions alternate clockwise and counterclockwise.</p>
+        <p>Mining happens while flying. Extra beams can reach exposed ore in neighboring rings. Minerals enter cargo automatically.</p>
       </div>
 
       {/* Danger Zone: Wipe Save Data */}

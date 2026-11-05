@@ -85,7 +85,7 @@ const MainContent: React.FC = () => {
             <span><b>{currentDps}</b> dps / ship</span>
             <span className="ml-auto">ring {ringProgress.ring} · auto mining</span>
           </div>
-          <div className="flight-help hidden md:flex"><span>automatic <b>ring excavation</b></span><span>cargo <b>instant collection</b></span><span>tab <b>toggle panel</b></span></div>
+          <div className="flight-help hidden md:flex"><span>automatic <b>circular foraging</b></span><span>cargo <b>instant collection</b></span><span>tab <b>toggle panel</b></span></div>
         </div>
 
         {/* Offline Earnings Toast */}
@@ -157,7 +157,7 @@ const MainContent: React.FC = () => {
                     {activeTab === 'upgrades' && 'ship systems'}
                     {activeTab === 'crafting' && 'crafting bay'}
                     {activeTab === 'quantum' && 'singularity'}
-                    {activeTab === 'stats' && 'telemetry & audio'}
+                    {activeTab === 'stats' && 'mission telemetry'}
                   </span>
                 </div>
 

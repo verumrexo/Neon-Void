@@ -11,8 +11,8 @@ import {
 } from '../types/game';
 import { AsteroidWorld, BLOCK_SIZE, getRingHardness } from '../engine/world';
 import { RingMiningEngine, createShip, ShipPhysicsState } from '../engine/physics';
+import { gameFrames } from '../engine/frameClock';
 import { particleSystem } from '../engine/particles';
-import { sound } from '../audio/sound';
 
 const SAVE_KEY = 'nvm_save_v1';
 
@@ -169,7 +169,7 @@ interface GameContextType {
   world: AsteroidWorld;
   currentDps: number;
   availableStardustOnPrestige: number;
-  ringProgress: { ring: number; remaining: number; total: number };
+  ringProgress: { ring: number };
   offlineEarnings: { seconds: number; minerals: Partial<Record<ResourceType, number>> } | null;
   clearOfflineNotification: () => void;
   buyUpgrade: (type: keyof UpgradesState) => boolean;
@@ -185,14 +185,13 @@ const GameContext = createContext<GameContextType | null>(null);
 
 export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // World instance
-  const worldRef = useRef<AsteroidWorld>(new AsteroidWorld());
-  const world = worldRef.current;
+  const [world] = useState(() => new AsteroidWorld());
 
   // Ship physics state
   const shipRef = useRef<ShipPhysicsState>(createShip());
   const dronesRef = useRef<FleetShip[]>([]);
   const ringEngineRef = useRef(new RingMiningEngine());
-  const [ringProgress, setRingProgress] = useState({ ring: 1, remaining: 0, total: 0 });
+  const [ringProgress, setRingProgress] = useState({ ring: 1 });
 
   // React state for UI rendering
   const [resources, setResources] = useState<Record<ResourceType, number>>({
@@ -268,6 +267,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (saved.stats) setStats(saved.stats);
         if (saved.world) world.deserialize(saved.world);
         Object.assign(shipRef.current, createShip());
+        if (saved.ship && Number.isFinite(saved.ship.x) && Number.isFinite(saved.ship.y) &&
+            world.isMined(Math.floor(saved.ship.x / BLOCK_SIZE), Math.floor(saved.ship.y / BLOCK_SIZE))) {
+          Object.assign(shipRef.current, { x: saved.ship.x, previousX: saved.ship.x,
+            y: saved.ship.y, previousY: saved.ship.y,
+            orbitRadius: Number.isFinite(saved.ship.orbitRadius) ? saved.ship.orbitRadius : Math.hypot(saved.ship.x - 13, saved.ship.y - 13),
+            hoverAngle: Number.isFinite(saved.ship.hoverAngle) ? saved.ship.hoverAngle : 0 });
+        }
 
         // Offline progress calculation
         if (saved.lastSaveTime) {
@@ -301,30 +307,38 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  // Save game state periodically
+  // A stable timer reads current state. UI updates must not postpone saving forever.
+  const saveStateRef = useRef({ resources, upgrades, craftingItems, quantumPerks, stats });
+  saveStateRef.current = { resources, upgrades, craftingItems, quantumPerks, stats };
   useEffect(() => {
-    const saveTimer = setInterval(() => {
+    let idle: number | null = null;
+    const save = () => {
       try {
-        const stateToSave = {
-          resources,
-          upgrades,
-          craftingItems,
-          quantumPerks,
-          stats,
+        localStorage.setItem(SAVE_KEY, JSON.stringify({
+          ...saveStateRef.current,
           world: world.serialize(),
-          ship: { x: shipRef.current.x, y: shipRef.current.y },
-          lastSaveTime: Date.now(),
-          version: 2,
-          ring: ringEngineRef.current.ring,
-        };
-        localStorage.setItem(SAVE_KEY, JSON.stringify(stateToSave));
-      } catch (e) {
-        console.warn('Failed to auto-save game', e);
-      }
-    }, 4000);
-
-    return () => clearInterval(saveTimer);
-  }, [resources, upgrades, craftingItems, quantumPerks, stats]);
+          ship: { x: shipRef.current.x, y: shipRef.current.y, orbitRadius: shipRef.current.orbitRadius, hoverAngle: shipRef.current.hoverAngle },
+          lastSaveTime: Date.now(), version: 2, ring: ringEngineRef.current.ring,
+        }));
+      } catch (error) { console.warn('Failed to auto-save game', error); }
+    };
+    const scheduleSave = () => {
+      if (idle !== null) return;
+      if ('requestIdleCallback' in window) {
+        idle = window.requestIdleCallback(() => { idle = null; save(); }, { timeout: 2000 });
+      } else save();
+    };
+    const saveOnHide = () => { if (document.hidden) save(); };
+    const timer = window.setInterval(scheduleSave, 4000);
+    document.addEventListener('visibilitychange', saveOnHide);
+    window.addEventListener('pagehide', save);
+    return () => {
+      window.clearInterval(timer);
+      if (idle !== null) window.cancelIdleCallback(idle);
+      document.removeEventListener('visibilitychange', saveOnHide);
+      window.removeEventListener('pagehide', save);
+    };
+  }, [world]);
 
   // Sync drones with upgrades & crafted items & quantum perks
   useEffect(() => {
@@ -344,7 +358,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const currentDrones = dronesRef.current;
     if (currentDrones.length < targetDroneCount) {
       for (let i = currentDrones.length; i < targetDroneCount; i++) {
-        currentDrones.push({ ...createShip(i + 1), id: `ship-${i + 1}-${Date.now()}` });
+        currentDrones.push({ ...createShip(i + 1),
+          x: shipRef.current.x, previousX: shipRef.current.x,
+          y: shipRef.current.y, previousY: shipRef.current.y,
+          orbitRadius: shipRef.current.orbitRadius, id: `ship-${i + 1}-${Date.now()}` });
       }
     } else if (currentDrones.length > targetDroneCount) {
       dronesRef.current = currentDrones.slice(0, targetDroneCount);
@@ -397,7 +414,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ...prev,
         [type]: prev[type] + 1,
       }));
-      sound.playUpgradeSound();
       return true;
     }
     return false;
@@ -428,7 +444,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       prev.map((i) => (i.id === itemId ? { ...i, crafted: true } : i))
     );
 
-    sound.playUpgradeSound();
     return true;
   };
 
@@ -445,7 +460,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setQuantumPerks((prev) =>
         prev.map((p) => (p.id === perkId ? { ...p, level: p.level + 1 } : p))
       );
-      sound.playSingularity();
       return true;
     }
     return false;
@@ -453,7 +467,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const triggerQuantumSingularity = () => {
     if (availableStardustOnPrestige <= 0) return;
-    sound.playSingularity();
     const stardustGained = availableStardustOnPrestige;
 
     // Reset local sector
@@ -461,7 +474,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     Object.assign(shipRef.current, createShip());
     dronesRef.current.forEach((ship, index) => Object.assign(ship, createShip(index + 1)));
     ringEngineRef.current.reset();
-    setRingProgress({ ring: 1, remaining: 0, total: 0 });
+    setRingProgress({ ring: 1 });
     particleSystem.clear();
 
     // Reset resources and add gained stardust
@@ -505,7 +518,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     Object.assign(shipRef.current, createShip());
     dronesRef.current.forEach((ship, index) => Object.assign(ship, createShip(index + 1)));
     ringEngineRef.current.reset();
-    setRingProgress({ ring: 1, remaining: 0, total: 0 });
+    setRingProgress({ ring: 1 });
     particleSystem.clear();
     setResources({
       basalt: 0,
@@ -545,23 +558,32 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  // One controller owns fleet assignments and ring completion. UI updates are batched.
+  // Continuous foraging and UI updates share the same smooth frame clock.
   useEffect(() => {
-    let lastTime = performance.now();
-    let frame = 0;
-    let pending = 0;
     let uiTimer = 0;
+    let damageTimer = 0;
+    const rareBoost = getRareBoost(craftingItems, quantumPerks);
+    const baseDps = calculateDps(upgrades, craftingItems, quantumPerks);
+    let speed = 1 + (upgrades.flightSpeed - 1) * 0.12;
+    let beams = upgrades.beamCount + (quantumPerks.find(perk => perk.id === 'multi_beam_mastery')?.level || 0);
+    let range = 100 + (upgrades.laserRange - 1) * 20;
+    for (const item of craftingItems) if (item.crafted) {
+      speed *= item.statBonus.speedBoost || 1;
+      beams += item.statBonus.extraBeams || 0;
+      range += item.statBonus.rangeBoost || 0;
+    }
+    const fleet = [shipRef.current, ...dronesRef.current];
     let sectorEpoch = world.terrainEpoch;
     const gains = {} as Partial<Record<ResourceType, number>>;
     let destroyedCount = 0;
     let deepest = 0;
     let damage = 0;
-    const flush = () => {
+    const flush = (force = false) => {
       if (sectorEpoch !== world.terrainEpoch) return;
-      if (destroyedCount || damage) {
+      if (destroyedCount || (damage && (force || damageTimer >= 1))) {
         const credited = { ...gains };
         const count = destroyedCount, depth = deepest, dealt = damage;
-        setResources(previous => {
+        if (count) setResources(previous => {
           const result = { ...previous };
           for (const [type, amount] of Object.entries(credited)) result[type as ResourceType] += amount!;
           return result;
@@ -576,48 +598,28 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             maxDepthReached: Math.max(previous.maxDepthReached, depth) };
         });
         for (const key of Object.keys(gains)) delete gains[key as ResourceType];
-        destroyedCount = damage = deepest = 0;
+        destroyedCount = damage = deepest = damageTimer = 0;
       }
       const engine = ringEngineRef.current;
-      setRingProgress(previous => previous.ring === engine.ring && previous.remaining === engine.remaining && previous.total === engine.total
-        ? previous : { ring: engine.ring, remaining: engine.remaining, total: engine.total });
+      setRingProgress(previous => previous.ring === engine.ring ? previous : { ring: engine.ring });
     };
-    const tick = (now: number) => {
-      const dt = Math.min(0.1, (now - lastTime) / 1000);
-      lastTime = now;
-      pending += dt; uiTimer += dt;
-      // Fixed 30 Hz mining simulation; the canvas continues rendering at display refresh rate.
-      if (pending >= 1 / 30) {
-        const step = pending; pending = 0;
-        const rareBoost = getRareBoost(craftingItems, quantumPerks);
-        if (world.rareBoost !== rareBoost) { world.rareBoost = rareBoost; world.terrainEpoch++; }
-        sectorEpoch = world.terrainEpoch;
-        let speed = 1 + (upgrades.flightSpeed - 1) * 0.12;
-        let beams = upgrades.beamCount + (quantumPerks.find(perk => perk.id === 'multi_beam_mastery')?.level || 0);
-        let range = 100 + (upgrades.laserRange - 1) * 20;
-        for (const item of craftingItems) if (item.crafted) {
-          speed *= item.statBonus.speedBoost || 1;
-          beams += item.statBonus.extraBeams || 0;
-          range += item.statBonus.rangeBoost || 0;
-        }
-        const fleet = [shipRef.current, ...dronesRef.current];
-        const destroyed = ringEngineRef.current.update(fleet, world, step,
-          calculateDps(upgrades, craftingItems, quantumPerks), range, beams, speed);
-        if (fleet.some(ship => ship.miningTargets.length)) sound.playLaserHit();
-        for (const block of destroyed) {
-          const amount = handleBlockDestroyed(block, craftingItems, quantumPerks);
-          gains[block.type] = (gains[block.type] || 0) + amount;
-          destroyedCount++;
-          deepest = Math.max(deepest, Math.round(Math.hypot(block.x, block.y)));
-        }
-        damage += fleet.reduce((sum, ship) => sum + (ship.miningTargets.length ? calculateDps(upgrades, craftingItems, quantumPerks) * step : 0), 0);
-        particleSystem.update(step);
+    const unsubscribe = gameFrames.subscribeUpdate(step => {
+      uiTimer += step; damageTimer += step;
+      if (world.rareBoost !== rareBoost) { world.rareBoost = rareBoost; world.terrainEpoch++; }
+      sectorEpoch = world.terrainEpoch;
+      const destroyed = ringEngineRef.current.update(fleet, world, step,
+        baseDps, range, beams, speed);
+      for (const block of destroyed) {
+        const amount = handleBlockDestroyed(block, craftingItems, quantumPerks);
+        gains[block.type] = (gains[block.type] || 0) + amount;
+        destroyedCount++;
+        deepest = Math.max(deepest, Math.round(Math.hypot(block.x, block.y)));
       }
-      if (uiTimer >= 0.15) { flush(); uiTimer = 0; }
-      frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => { cancelAnimationFrame(frame); flush(); };
+      damage += fleet.reduce((sum, ship) => sum + (ship.miningTargets.length ? baseDps * step : 0), 0);
+      particleSystem.update(step);
+      if (uiTimer >= 0.15) { flush(); uiTimer -= 0.15; }
+    });
+    return () => { unsubscribe(); flush(true); };
   }, [upgrades, craftingItems, quantumPerks]);
 
   const handleBlockDestroyed = (block: BlockData, crafting: CraftingItem[], perks: QuantumPerk[]) => {
@@ -627,7 +629,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const refining = crafting.reduce((sum, item) => sum + (item.crafted ? item.statBonus.refiningBonus || 0 : 0), 0);
     const amount = Math.max(1, Math.round((block.type === 'basalt' ? 2 : 1) * (1 + cosmic * 0.5 + refining)));
     // Fragments are visual only. Resources enter cargo without proximity checks.
-    sound.playBlockShatter(definition.tier);
     particleSystem.spawnBlockShatter(x, y, block.color, block.glow, definition.tier);
     particleSystem.spawnFloatingText(x, y, `+${amount} ${definition.name}`, block.color);
     return amount;

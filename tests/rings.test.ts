@@ -18,31 +18,20 @@ test('ship directions alternate and rock hardness compounds every five rings', (
   }
 });
 
-for (const size of [1, 2, 4]) test(`${size} ships clear rings without skipping rock or duplicating assignments`, () => {
+for (const size of [1, 2, 4]) test(`${size} ships circle continuously while mining without jumping or crossing solid rock`, () => {
   const world = new AsteroidWorld();
   const engine = new RingMiningEngine();
   const fleet = Array.from({ length: size }, (_, index) => createShip(index));
-  let destroyedCount = 0;
-  let idle = 0;
-  let longestIdle = 0;
-  let previousRing = 1;
-  for (let frame = 0; frame < 60_000 && engine.ring < 12; frame++) {
-    const destroyed = engine.update(fleet, world, 1 / 30, 80, 100, 2, 2);
-    for (const block of destroyed) assert.equal(getRingNumber(block.x, block.y), engine.ring);
+  let destroyedCount = 0, moving = 0;
+  for (let frame = 0; frame < 12_000; frame++) {
+    const before = fleet.map(ship => ({ x: ship.x, y: ship.y }));
+    const destroyed = engine.update(fleet, world, 1 / 60, 80, 100, 2, 2);
     destroyedCount += destroyed.length;
-    idle = destroyed.length ? 0 : idle + 1;
-    longestIdle = Math.max(longestIdle, idle);
-    if (engine.ring !== previousRing) {
-      for (let y = -20; y <= 20; y++) for (let x = -20; x <= 20; x++) {
-        if (getRingNumber(x, y) < engine.ring) assert(world.isMined(x, y));
-      }
-      previousRing = engine.ring;
-    }
-    const assignments = fleet.flatMap(ship => ship.ringTarget ? [`${ship.ringTarget.gx},${ship.ringTarget.gy}`] : []);
-    assert.equal(new Set(assignments).size, assignments.length);
-    for (const ship of fleet) {
+    for (const [index, ship] of fleet.entries()) {
+      const distance = Math.hypot(ship.x - before[index].x, ship.y - before[index].y);
+      assert(distance <= 116 / 60 + 1e-8, 'ship jumped or teleported');
+      if (distance > 0.005) moving++;
       assert(Number.isFinite(ship.x) && Number.isFinite(ship.y));
-      assert(world.isMined(Math.floor(ship.x / 26), Math.floor(ship.y / 26)));
       const gx = Math.floor(ship.x / 26), gy = Math.floor(ship.y / 26);
       for (let y = gy - 1; y <= gy + 1; y++) for (let x = gx - 1; x <= gx + 1; x++) {
         if (world.isMined(x, y)) continue;
@@ -52,10 +41,36 @@ for (const size of [1, 2, 4]) test(`${size} ships clear rings without skipping r
       }
     }
   }
-  assert(engine.ring >= 12);
-  assert(destroyedCount > 500);
-  assert(longestIdle < 900);
-  world.createSpawnClearing();
-  engine.update(fleet, world, 1 / 30, 8, 100, 1, 1);
-  assert.equal(engine.ring, 1);
+  assert(destroyedCount > 50, `mining stalled: ${destroyedCount}`);
+  assert(moving > 12_000 * size * 0.8, 'ships stopped to wait for targets');
+  assert(engine.ring > 2);
+});
+
+test('bees keep flying while unbreakable ore remains in range', () => {
+  const world = new AsteroidWorld();
+  const engine = new RingMiningEngine();
+  const ship = createShip();
+  let moving = 0, mining = 0;
+  for (let frame = 0; frame < 2400; frame++) {
+    const x = ship.x, y = ship.y;
+    engine.update([ship], world, 1 / 60, 0, 100, 1, 1);
+    if (Math.hypot(ship.x - x, ship.y - y) > 0.005) moving++;
+    if (ship.miningTargets.length) mining++;
+  }
+  assert(moving > 2200, `moving frames: ${moving}`);
+  assert(mining > 2200);
+  assert.equal(world.minedBlocks.size, 21);
+});
+
+test('multiple beams can work across exposed neighboring depth rings', () => {
+  const world = new AsteroidWorld();
+  const engine = new RingMiningEngine();
+  const ship = createShip();
+  let overlapping = false;
+  for (let frame = 0; frame < 3600; frame++) {
+    engine.update([ship], world, 1 / 60, 80, 150, 3, 1);
+    const depths = new Set(ship.miningTargets.map(target => getRingNumber(target.gx, target.gy)));
+    if (depths.size > 1) overlapping = true;
+  }
+  assert(overlapping, 'beams were unnecessarily restricted to one ring');
 });

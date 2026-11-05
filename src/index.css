@@ -105,3 +105,10 @@ kbd { font: 10px var(--font-mono); opacity: .4; margin-left: 8px; }
 }
 
 @media (min-width: 768px) { .flight-viewport [class*="bottom-4"] { bottom: 80px; } }
+
+/* Static panels should not blur/repaint the moving canvas underneath them. */
+.command-header, .mobile-dock, .system-panel { backdrop-filter: none; }
+.mobile-dock { background: #06080e; }
+.system-panel { background: #090d15; }
+.scanlines { display: none; }
+.flight-viewport { contain: layout paint; }

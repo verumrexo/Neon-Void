@@ -26,17 +26,25 @@ export class AsteroidWorld {
   public damagedBlocks: Map<string, number> = new Map();
 
   public terrainEpoch = 0;
+  public sectorEpoch = 0;
   public rareBoost = 0;
-  private chunkVersions = new Map<string, number>();
+  private chunkVersions = new Map<number, Map<string, number>>();
 
-  public getChunkVersion(cx: number, cy: number): number {
-    return this.chunkVersions.get(`${cx},${cy}`) || 0;
+  public getChunkVersion(cx: number, cy: number, detail = 1): number {
+    let versions = this.chunkVersions.get(detail);
+    if (!versions) { versions = new Map(); this.chunkVersions.set(detail, versions); }
+    return versions.get(`${cx},${cy}`) || 0;
   }
 
   private invalidateTerrain(gx: number, gy: number) {
-    for (const [x, y] of [[gx, gy], [gx-1, gy], [gx+1, gy], [gx, gy-1], [gx, gy+1]]) {
-      const key = `${Math.floor(x / CHUNK_SIZE)},${Math.floor(y / CHUNK_SIZE)}`;
-      this.chunkVersions.set(key, (this.chunkVersions.get(key) || 0) + 1);
+    // Track only detail levels the renderer has used; hits do not invalidate terrain.
+    for (const [detail, versions] of this.chunkVersions) {
+      const size = CHUNK_SIZE * detail;
+      const touched = new Set<string>();
+      for (const [x, y] of [[gx, gy], [gx-1, gy], [gx+1, gy], [gx, gy-1], [gx, gy+1]]) {
+        touched.add(`${Math.floor(x / size)},${Math.floor(y / size)}`);
+      }
+      for (const key of touched) versions.set(key, (versions.get(key) || 0) + 1);
     }
   }
 
@@ -48,6 +56,7 @@ export class AsteroidWorld {
    * Initializes the starting cavern so the ship has room to fly and immediate rocks to mine.
    */
   public createSpawnClearing() {
+    this.sectorEpoch++;
     this.terrainEpoch++;
     this.chunkVersions.clear();
     this.minedBlocks.clear();
@@ -73,6 +82,7 @@ export class AsteroidWorld {
   }
 
   public deserialize(data: { mined?: string[]; damaged?: [string, number][] }) {
+    this.sectorEpoch++;
     this.terrainEpoch++;
     this.chunkVersions.clear();
     if (data.mined && Array.isArray(data.mined) && data.mined.length > 0) {

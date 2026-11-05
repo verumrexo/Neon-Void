@@ -1,8 +1,7 @@
 import React from 'react';
 import { useGame } from '../state/gameContext';
 import { RESOURCE_DEFINITIONS, ResourceType } from '../types/game';
-import { sound } from '../audio/sound';
-import { Volume2, VolumeX, Sparkles, Activity, Maximize } from 'lucide-react';
+import { Sparkles, Activity, Maximize } from 'lucide-react';
 
 interface TopBarProps {
   activeTab: 'upgrades' | 'crafting' | 'quantum' | 'stats' | null;
@@ -11,13 +10,6 @@ interface TopBarProps {
 
 export const TopBar: React.FC<TopBarProps> = ({ activeTab, setActiveTab }) => {
   const { resources, currentDps, availableStardustOnPrestige } = useGame();
-  const [muted, setMuted] = React.useState<boolean>(sound.getMuted());
-
-  const handleToggleMute = () => {
-    const isNowMuted = sound.toggleMute();
-    setMuted(isNowMuted);
-  };
-
   const primaryResources: ResourceType[] = ['basalt', 'iron', 'quartz', 'emeraldite', 'voidOre', 'sunstone'];
 
   return (
@@ -84,7 +76,7 @@ export const TopBar: React.FC<TopBarProps> = ({ activeTab, setActiveTab }) => {
           </button>
         </nav>
 
-        {/* Right: Audio Control & Quick Status */}
+        {/* Right: Display & Quick Status */}
         <div className="flex items-center gap-2 shrink-0">
           {availableStardustOnPrestige > 0 && (
             <button
@@ -102,13 +94,6 @@ export const TopBar: React.FC<TopBarProps> = ({ activeTab, setActiveTab }) => {
             aria-label="Toggle fullscreen"
             className="hidden md:block p-2 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5"
           ><Maximize className="w-4 h-4" /></button>
-          <button
-            onClick={handleToggleMute}
-            title={muted ? 'Unmute Audio' : 'Mute Audio'}
-            className="p-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 active:scale-95 transition-all"
-          >
-            {muted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-[#00f0ff]" />}
-          </button>
         </div>
       </div>
 
