@@ -130,8 +130,30 @@ export class RingMiningEngine {
     if (!ship.miningTargets.length) ship.orbitRadius += dt * 10 * speed;
     ship.orbitRadius = Math.max(32, Math.min(ship.orbitRadius, oldRadius + 24));
     const radius = ship.orbitRadius + Math.sin(ship.hoverAngle) * 5 + Math.sin(ship.hoverAngle * 1.71) * 2;
-    const dx = CENTER + Math.cos(nextAngle) * radius - ship.x;
-    const dy = CENTER + Math.sin(nextAngle) * radius - ship.y;
+    let goalX = CENTER + Math.cos(nextAngle) * radius;
+    let goalY = CENTER + Math.sin(nextAngle) * radius;
+    // Forage along the exposed rock face rather than following a rigid orbit.
+    let nearest: { x: number; y: number; score: number } | null = null;
+    const gridX = Math.floor(ship.x / BLOCK_SIZE), gridY = Math.floor(ship.y / BLOCK_SIZE);
+    const tangentX = -Math.sin(oldAngle) * ship.sweepDirection;
+    const tangentY = Math.cos(oldAngle) * ship.sweepDirection;
+    for (let y = gridY - 5; y <= gridY + 5; y++) for (let x = gridX - 5; x <= gridX + 5; x++) {
+      if (!world.isSurfaceBlock(x, y)) continue;
+      const wx = (x + 0.5) * BLOCK_SIZE, wy = (y + 0.5) * BLOCK_SIZE;
+      const distance = Math.hypot(wx - ship.x, wy - ship.y);
+      const score = distance - ((wx - ship.x) * tangentX + (wy - ship.y) * tangentY) / Math.max(1, distance) * 28;
+      if ((!nearest || score < nearest.score) && this.visible(ship, x, y, world)) nearest = { x: wx, y: wy, score };
+    }
+    if (nearest) {
+      const fromRock = Math.atan2(ship.y - nearest.y, ship.x - nearest.x);
+      const sway = Math.sin(ship.hoverAngle * 1.3) * 0.65 + Math.sin(ship.hoverAngle * 2.17) * 0.25;
+      const standOff = 30 + Math.sin(ship.hoverAngle * 0.83) * 7;
+      goalX = nearest.x + Math.cos(fromRock + sway) * standOff + tangentX * 14;
+      goalY = nearest.y + Math.sin(fromRock + sway) * standOff + tangentY * 14;
+      ship.orbitRadius = oldRadius;
+    }
+    const dx = goalX - ship.x;
+    const dy = goalY - ship.y;
     const distance = Math.hypot(dx, dy);
     const velocity = Math.min(58 * speed * (0.9 + 0.1 * Math.sin(ship.hoverAngle * 0.47)), distance * 5);
     const vx = distance > 0.01 ? dx / distance * velocity : 0;
