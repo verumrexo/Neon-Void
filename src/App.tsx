@@ -32,6 +32,18 @@ const MainContent: React.FC = () => {
   };
 
   useEffect(() => {
+    const viewport = window.visualViewport;
+    const syncHeight = () => document.documentElement.style.setProperty('--app-height', `${viewport?.height || window.innerHeight}px`);
+    syncHeight();
+    viewport?.addEventListener('resize', syncHeight);
+    window.addEventListener('resize', syncHeight);
+    return () => {
+      viewport?.removeEventListener('resize', syncHeight);
+      window.removeEventListener('resize', syncHeight);
+    };
+  }, []);
+
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.repeat || event.ctrlKey || event.metaKey || event.altKey ||
           (event.target instanceof HTMLElement && /INPUT|TEXTAREA|SELECT/.test(event.target.tagName))) return;
@@ -52,7 +64,7 @@ const MainContent: React.FC = () => {
   }, []);
 
   return (
-    <div className="relative w-screen h-screen flex flex-col bg-[#050508] text-white overflow-hidden select-none">
+    <div className="app-shell relative w-screen h-screen flex flex-col bg-[#050508] text-white overflow-hidden select-none">
       {/* Scanline CRT overlay */}
       <div className="absolute inset-0 scanlines z-30 pointer-events-none opacity-30" />
 
@@ -73,7 +85,7 @@ const MainContent: React.FC = () => {
             <span><b>{currentDps}</b> dps / ship</span>
             <span className="ml-auto">{hasManualTarget ? 'manual navigation' : 'mining active'}</span>
           </div>
-          <div className="flight-help hidden md:flex"><span>click <b>fly until blocked</b></span><span>hold <b>steer</b></span><span>esc <b>stop</b></span><span>tab <b>toggle panel</b></span></div>
+          <div className="flight-help hidden md:flex"><span>click <b>move fleet</b></span><span>hold <b>steer</b></span><span>esc <b>stop</b></span><span>tab <b>toggle panel</b></span></div>
         </div>
 
         {/* Offline Earnings Toast */}
@@ -185,7 +197,7 @@ const MainContent: React.FC = () => {
         )}
 
         {/* Mobile Ergonomic Bottom Tab Navigation Dock (Native App Feel on Phones) */}
-        <nav className="flex md:hidden absolute bottom-0 inset-x-0 h-14 z-40 bg-[#06080e]/95 border-t border-white/10 backdrop-blur-xl grid grid-cols-4 items-center px-1">
+        <nav className="mobile-dock flex md:hidden absolute bottom-0 inset-x-0 h-14 z-40 bg-[#06080e]/95 border-t border-white/10 backdrop-blur-xl grid grid-cols-4 items-center px-1">
           <button
             onClick={() => handleTabSelect('upgrades')}
             className={`flex flex-col items-center justify-center h-full gap-1 transition-colors ${

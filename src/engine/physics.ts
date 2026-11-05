@@ -33,7 +33,8 @@ export class PhysicsEngine {
     world: AsteroidWorld,
     dt: number,
     miningTarget: { gx: number; gy: number } | null = null,
-    speedMultiplier: number = 1
+    speedMultiplier: number = 1,
+    fleetCenter?: { x: number; y: number }
   ) {
     const cruiseSpeed = 58 * speedMultiplier;
     const guidedSpeed = 82 * speedMultiplier;
@@ -65,6 +66,16 @@ export class PhysicsEngine {
       ship.vy = Math.sin(ship.guidedAngle) * speed;
     } else if (ship.parked) {
       ship.vx = ship.vy = 0;
+    } else if (fleetCenter && Math.hypot(ship.x - fleetCenter.x, ship.y - fleetCenter.y) > 85) {
+      // Regroup before pursuing a distant mining orbit. Collision remains authoritative.
+      const dx = fleetCenter.x - ship.x;
+      const dy = fleetCenter.y - ship.y;
+      const distance = Math.hypot(dx, dy);
+      const heading = Math.atan2(dy, dx);
+      ship.angle = this.lerpAngle(ship.angle, heading, turnSpeed * dt);
+      ship.vx = dx / distance * cruiseSpeed;
+      ship.vy = dy / distance * cruiseSpeed;
+      ship.wanderAngle = heading;
     } else if (miningTarget) {
       // 2. AUTONOMOUS BUMBLEBEE HOVERING & ORBITING NEAR MINED ROCK
       // Roams around gracefully in the open cave near the block
@@ -222,7 +233,7 @@ export class PhysicsEngine {
   public updateFleet(
     ships: FleetShip[], world: AsteroidWorld, dt: number,
     rareBoost: number, dps: number, range: number, beamCount: number,
-    speedMultiplier: number, excludedTargets: Set<string>
+    speedMultiplier: number, excludedTargets: Set<string>, fleetCenter?: { x: number; y: number }
   ): { destroyedBlocks: { gx: number; gy: number; block: import('../types/game').BlockData }[] } {
     const destroyedBlocks: { gx: number; gy: number; block: import('../types/game').BlockData }[] = [];
     const claimed = new Set(excludedTargets);
@@ -232,7 +243,7 @@ export class PhysicsEngine {
           ? { x: ship.targetX, y: ship.targetY } : null, rareBoost);
       ship.miningTargets = targets.map(t => ({ gx: t.gx, gy: t.gy, color: t.block.color, glow: t.block.glow }));
       ship.miningTarget = ship.miningTargets[0] || null;
-      this.updateShip(ship, world, dt, ship.miningTarget, speedMultiplier);
+      this.updateShip(ship, world, dt, ship.miningTarget, speedMultiplier, fleetCenter);
       for (const target of targets) {
         claimed.add(`${target.gx},${target.gy}`);
         const result = world.damageBlock(target.gx, target.gy, dps / Math.max(1, targets.length * 0.75) * dt, rareBoost);

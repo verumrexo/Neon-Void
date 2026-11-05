@@ -102,15 +102,16 @@ export const GameCanvas: React.FC = () => {
     if (!gesture || gesture.id !== e.pointerId) return;
     gestureRef.current = null;
     if (performance.now() - gesture.started < 220) {
-      const point = screenToWorld(gesture.x, gesture.y);
+      const rect = e.currentTarget.getBoundingClientRect();
+      const point = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
       setManualTarget(point.x, point.y);
-    } else clearManualTarget();
+    } else clearManualTarget(true);
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   };
   const cancelGesture = () => {
     if (gestureRef.current) {
       gestureRef.current = null;
-      clearManualTarget();
+      clearManualTarget(true);
     }
   };
   useEffect(() => {
@@ -212,7 +213,7 @@ export const GameCanvas: React.FC = () => {
       const gesture = gestureRef.current;
       if (gesture && performance.now() - gesture.started >= 220) {
         const point = screenToWorld(gesture.x, gesture.y);
-        setManualTarget(point.x, point.y, 'heading');
+        setManualTarget(point.x, point.y, 'destination');
       }
 
       const camX = cameraRef.current.x;

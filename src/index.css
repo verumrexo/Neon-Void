@@ -96,3 +96,10 @@ kbd { font: 10px var(--font-mono); opacity: .4; margin-left: 8px; }
 .quantum-panel .justify-between { flex-wrap: wrap; gap: 8px; }
 .quantum-panel > .flex { flex-wrap: wrap; }
 .quantum-panel .grid { grid-template-columns: minmax(0, 1fr); }
+
+.app-shell { height: 100dvh; height: var(--app-height, 100dvh); }
+@media (max-width: 767px) {
+  .mobile-dock { height: calc(56px + env(safe-area-inset-bottom, 0px)); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .flight-viewport { padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px)); }
+  .system-panel { bottom: calc(56px + env(safe-area-inset-bottom, 0px)); max-height: calc(var(--app-height, 100dvh) - 170px - env(safe-area-inset-bottom, 0px)); }
+}

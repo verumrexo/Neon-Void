@@ -192,7 +192,7 @@ interface GameContextType {
   triggerQuantumSingularity: () => void;
   resetAllProgress: () => void;
   setManualTarget: (worldX: number, worldY: number, mode?: 'destination' | 'heading') => void;
-  clearManualTarget: () => void;
+  clearManualTarget: (resume?: boolean) => void;
 }
 
 const GameContext = createContext<GameContextType | null>(null);
@@ -610,15 +610,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const setManualTarget = (worldX: number, worldY: number, mode: 'destination' | 'heading' = 'heading') => {
-    const heading = Math.atan2(worldY - shipRef.current.y, worldX - shipRef.current.x);
-    [shipRef.current, ...dronesRef.current].forEach((ship, index) => {
-      // Small formation offsets prevent the fleet piling onto one point.
-      const offset = index === 0 ? 0 : 28;
-      const angle = index * 2.39996;
-      ship.guidedAngle = heading;
-      ship.targetX = worldX + Math.cos(angle) * offset;
-      ship.targetY = worldY + Math.sin(angle) * offset;
+  const setManualTarget = (worldX: number, worldY: number, mode: 'destination' | 'heading' = 'destination') => {
+    [shipRef.current, ...dronesRef.current].forEach(ship => {
+      ship.targetX = worldX;
+      ship.targetY = worldY;
+      ship.guidedAngle = Math.atan2(worldY - ship.y, worldX - ship.x);
       ship.navigationMode = mode;
       ship.parked = false;
       ship.isManualGuided = true;
@@ -626,11 +622,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setHasManualTarget(true);
   };
 
-  const clearManualTarget = () => {
+  const clearManualTarget = (resume = false) => {
     [shipRef.current, ...dronesRef.current].forEach(ship => {
       ship.targetX = ship.targetY = ship.guidedAngle = null;
       ship.isManualGuided = false;
-      ship.parked = true;
+      ship.parked = !resume;
       ship.vx = ship.vy = 0;
     });
     setHasManualTarget(false);
@@ -646,6 +642,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       lastTime = now;
 
       const ship = shipRef.current;
+      const fleet = [ship, ...dronesRef.current];
+      const fleetCenter = fleet.length > 1 ? {
+        x: fleet.reduce((sum, member) => sum + member.x, 0) / fleet.length,
+        y: fleet.reduce((sum, member) => sum + member.y, 0) / fleet.length,
+      } : undefined;
       const rareBoost = getRareBoost(craftingItems, quantumPerks);
 
       // Check if ship reached manual destination and cleared it
@@ -732,7 +733,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         world,
         dt,
         primaryTarget ? { gx: primaryTarget.gx, gy: primaryTarget.gy } : null,
-        speedMult
+        speedMult, fleetCenter
       );
 
       // 2. FIRE MINING LASERS AT ALL ACTIVE TARGETS SIMULTANEOUSLY
@@ -769,7 +770,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         dt,
         rareBoost,
         droneDps, rangePx, maxBeams, speedMult,
-        shipLockedKeys
+        shipLockedKeys, fleetCenter
       );
       droneUpdate.destroyedBlocks.forEach((d) => {
         const bx = d.gx * BLOCK_SIZE + BLOCK_SIZE / 2;
