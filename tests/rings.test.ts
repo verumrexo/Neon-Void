@@ -75,25 +75,15 @@ test('multiple beams can work across exposed neighboring depth rings', () => {
   assert(overlapping, 'beams were unnecessarily restricted to one ring');
 });
 
-test('mining stays within the moving angular sector and advances outward without resetting its angle', () => {
+test('three ships work separate frontier targets instead of converging on an interior leftover', () => {
   const world = new AsteroidWorld();
+  for (let y=-8;y<=8;y++) for(let x=-8;x<=8;x++) if(Math.hypot(x,y)<8) world.minedBlocks.add(`${x},${y}`);
+  world.minedBlocks.delete('2,0');
+  const fleet = [0,1,2].map(createShip);
   const engine = new RingMiningEngine();
-  const ship = createShip();
-  let expanded = false;
-  for (let frame = 0; frame < 18000; frame++) {
-    const oldRadius = ship.orbitRadius, oldAngle = ship.workAngle;
-    engine.update([ship], world, 1 / 60, 100, 150, 2, 2);
-    assert(ship.workAngle >= oldAngle);
-    assert(ship.workAngle - oldAngle < 0.1);
-    if (ship.orbitRadius > oldRadius) {
-      assert.equal(ship.orbitRadius - oldRadius, 26);
-      expanded = true;
-    }
-    for (const target of ship.miningTargets) {
-      const angle = Math.atan2(target.gy, target.gx);
-      const offset = Math.atan2(Math.sin(angle - ship.workAngle), Math.cos(angle - ship.workAngle));
-      assert(Math.abs(offset) <= 0.85 + 1e-8);
-    }
-  }
-  assert(expanded, 'work zone never finished a lap');
+  for (let frame=0;frame<1800;frame++) engine.update(fleet,world,1/60,0,260,1,1);
+  const targets = fleet.flatMap(ship=>ship.miningTargets.map(target=>`${target.gx},${target.gy}`));
+  assert.equal(targets.length,3);
+  assert.equal(new Set(targets).size,3);
+  assert(targets.every(key=>key!=='2,0'));
 });
