@@ -92,7 +92,7 @@ export const StatsPanel: React.FC = () => {
 
       <div className="p-4 rounded border border-white/10 bg-[#090b10] text-xs text-white/60 space-y-2">
         <h3 className="font-bold font-mono uppercase tracking-wider text-white/80">Circular Foraging</h3>
-        <p>Ships drift around spawn like bees, gradually exploring outward. Their directions alternate clockwise and counterclockwise.</p>
+        <p>One ship circles spawn like a bee. A larger fleet divides the mining area into equal wedges, sweeping back and forth with a small overlap at the edges.</p>
         <p>Mining happens while flying. Extra beams can reach exposed ore in neighboring rings. Minerals enter cargo automatically.</p>
       </div>
 

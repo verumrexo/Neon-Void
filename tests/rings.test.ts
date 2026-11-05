@@ -87,3 +87,30 @@ test('three ships work separate frontier targets instead of converging on an int
   assert.equal(new Set(targets).size,3);
   assert(targets.every(key=>key!=='2,0'));
 });
+
+for (const count of [2,3,4,5,8]) test(`${count} ships receive equal wedges and reverse at their boundaries`, () => {
+  const world = new AsteroidWorld();
+  const engine = new RingMiningEngine();
+  const fleet = Array.from({length:count},(_,index)=>createShip(index));
+  engine.update(fleet,world,1/60,0,100,1,1);
+  for (const [index,ship] of fleet.entries()) {
+    assert(Math.abs(ship.wedgeSpan-Math.PI*2/count)<1e-9);
+    assert(Math.abs(ship.wedgeStart-(-Math.PI/2+index*Math.PI*2/count))<1e-9);
+    const end = ship.wedgeStart + ship.wedgeSpan - 0.01;
+    ship.x=13+Math.cos(end)*30;ship.y=13+Math.sin(end)*30;
+    ship.sweepDirection=1;
+  }
+  engine.update(fleet,world,1/60,0,100,1,1);
+  assert(fleet.every(ship=>ship.sweepDirection===-1));
+  for (const ship of fleet) {
+    const start=ship.wedgeStart+0.01;
+    ship.x=13+Math.cos(start)*30;ship.y=13+Math.sin(start)*30;
+  }
+  engine.update(fleet,world,1/60,0,100,1,1);
+  assert(fleet.every(ship=>ship.sweepDirection===1));
+  const firstX=fleet[0].x,firstY=fleet[0].y;
+  fleet.push(createShip(count));
+  engine.update(fleet,world,1/60,0,100,1,1);
+  assert(fleet.every(ship=>Math.abs(ship.wedgeSpan-Math.PI*2/(count+1))<1e-9));
+  assert(Math.hypot(fleet[0].x-firstX,fleet[0].y-firstY)<1);
+});

@@ -8,6 +8,11 @@ export interface ShipPhysicsState {
   hoverAngle: number;
   orbitRadius: number;
   sensorTimer: number;
+  wedgeStart: number;
+  wedgeSpan: number;
+  helpingNeighbor: boolean;
+  helpTime: number;
+  helpCooldown: number;
   forageTarget?: { gx: number; gy: number };
   workAngle: number;
   lapProgress: number;
@@ -22,7 +27,7 @@ const CENTER = BLOCK_SIZE / 2;
 export function createShip(index = 0): ShipPhysicsState {
   return { x: 0, y: 0, vx: 0, vy: 0, angle: 0,
     previousX: 0, previousY: 0, previousAngle: 0,
-    hoverAngle: index * 2.39996, orbitRadius: 38, sensorTimer: 0, workAngle: -Math.PI * 0.75, lapProgress: 0,
+    hoverAngle: index * 2.39996, orbitRadius: 38, sensorTimer: 0, wedgeStart: -Math.PI / 2, wedgeSpan: TAU, helpingNeighbor: false, helpTime: 0, helpCooldown: 0, workAngle: -Math.PI * 0.75, lapProgress: 0,
     miningTarget: null, miningTargets: [], sweepDirection: index % 2 === 0 ? 1 : -1 };
 }
 
@@ -32,6 +37,7 @@ export class RingMiningEngine {
   private sector = -1;
   private frontier = new Map<string, { gx: number; gy: number }>();
   private revision = -1;
+  private fleetSize = 0;
 
   public reset() { this.ring = 1; this.sector = -1; }
 
@@ -53,6 +59,15 @@ export class RingMiningEngine {
       }
       this.revision = world.minedBlocks.size;
     }
+    if (this.fleetSize !== ships.length) {
+      this.fleetSize = ships.length;
+      ships.forEach((ship, index) => {
+        ship.wedgeSpan = TAU / ships.length;
+        ship.wedgeStart = -Math.PI / 2 + index * ship.wedgeSpan;
+        ship.forageTarget = undefined;
+        ship.miningTargets.length = 0; ship.sensorTimer = 0;
+      });
+    }
     const destroyed: BlockData[] = [];
     const claimed = new Set<string>();
     const flightClaims = new Set<string>();
@@ -61,7 +76,7 @@ export class RingMiningEngine {
       this.moveShip(ship, world, dt, speedMultiplier, flightClaims);
       ship.sensorTimer -= dt;
       const retained = ship.miningTargets.filter(target => !world.isMined(target.gx, target.gy) &&
-        !claimed.has(`${target.gx},${target.gy}`) && this.inRange(ship, target.gx, target.gy, range) && this.visible(ship, target.gx, target.gy, world));
+        !claimed.has(`${target.gx},${target.gy}`) && (ship.helpingNeighbor || this.owns(ship, target.gx, target.gy)) && this.inRange(ship, target.gx, target.gy, range) && this.visible(ship, target.gx, target.gy, world));
       if (ship.sensorTimer <= 0 || retained.length < ship.miningTargets.length) {
         ship.miningTargets = this.findTargets(ship, world, range, beams, claimed, retained);
         ship.sensorTimer = 0.12;
@@ -85,6 +100,18 @@ export class RingMiningEngine {
     this.ring = Math.max(1, ...ships.map(ship => getRingNumber(
       (Math.hypot(ship.x - CENTER, ship.y - CENTER) + 30) / BLOCK_SIZE, 0)));
     return destroyed;
+  }
+
+  private adjacent(ship: ShipPhysicsState, gx: number, gy: number): boolean {
+    const offset = ((Math.atan2(gy, gx) - ship.wedgeStart) % TAU + TAU) % TAU;
+    return offset <= ship.wedgeSpan * 2 || offset >= TAU - ship.wedgeSpan;
+  }
+
+  private owns(ship: ShipPhysicsState, gx: number, gy: number): boolean {
+    if (ship.wedgeSpan >= TAU) return true;
+    const offset = ((Math.atan2(gy, gx) - ship.wedgeStart) % TAU + TAU) % TAU;
+    const overlap = Math.min(0.08, ship.wedgeSpan * 0.08);
+    return offset <= ship.wedgeSpan + overlap || offset >= TAU - overlap;
   }
 
   private islandPenalty(world: AsteroidWorld, gx: number, gy: number): number {
@@ -128,9 +155,11 @@ export class RingMiningEngine {
         (old.has(key) ? 22 : 0) + (claimed.has(key) ? 1000 : 0) + this.islandPenalty(world, x, y);
       candidates.push({ gx: x, gy: y, score });
     }
-    candidates.sort((a, b) => a.score - b.score);
+    const owned = candidates.filter(target => this.owns(ship, target.gx, target.gy) && this.visible(ship, target.gx, target.gy, world));
+    const pool = owned.length ? owned : candidates.filter(target => this.adjacent(ship,target.gx,target.gy));
+    pool.sort((a, b) => a.score - b.score);
     const targets: MiningTarget[] = [];
-    for (const candidate of candidates) {
+    for (const candidate of pool) {
       if (!this.visible(ship, candidate.gx, candidate.gy, world)) continue;
       const block = world.getBlock(candidate.gx, candidate.gy);
       if (!block) continue;
@@ -155,6 +184,20 @@ export class RingMiningEngine {
     const oldAngle = Math.atan2(ship.y - CENTER, ship.x - CENTER);
     const oldRadius = Math.hypot(ship.x - CENTER, ship.y - CENTER);
     ship.hoverAngle += dt * 1.1;
+    const oldDirection = ship.sweepDirection;
+    ship.helpCooldown = Math.max(0, ship.helpCooldown - dt);
+    if (ship.helpingNeighbor) ship.helpTime += dt;
+    if (ship.helpTime >= 5) {
+      ship.helpingNeighbor = false; ship.helpTime = 0; ship.helpCooldown = 10;
+      ship.forageTarget = undefined; ship.sensorTimer = 0;
+    }
+    if (ship.wedgeSpan < TAU) {
+      const offset = ((oldAngle - ship.wedgeStart) % TAU + TAU) % TAU;
+      const margin = Math.min(0.15, ship.wedgeSpan * 0.15);
+      if (offset <= margin) ship.sweepDirection = 1;
+      else if (offset >= ship.wedgeSpan - margin && offset <= ship.wedgeSpan + Math.PI) ship.sweepDirection = -1;
+    }
+    if (oldDirection !== ship.sweepDirection) { ship.forageTarget = undefined; ship.sensorTimer = 0; }
     ship.workAngle = oldAngle;
     ship.orbitRadius = Math.max(32, oldRadius);
     const nextAngle = oldAngle + ship.sweepDirection * (0.24 + Math.sin(ship.hoverAngle * 0.73) * 0.055);
@@ -164,17 +207,23 @@ export class RingMiningEngine {
     // Forage along the exposed rock face rather than following a rigid orbit.
     const cached = ship.forageTarget;
     let nearest: { x: number; y: number; score: number } | null = cached &&
-      !world.isMined(cached.gx,cached.gy) && !claimed.has(`${cached.gx},${cached.gy}`)
+      (ship.helpingNeighbor || this.owns(ship,cached.gx,cached.gy)) && !world.isMined(cached.gx,cached.gy) && !claimed.has(`${cached.gx},${cached.gy}`)
       ? {x:(cached.gx+0.5)*BLOCK_SIZE,y:(cached.gy+0.5)*BLOCK_SIZE,score:0} : null;
     const gridX = Math.floor(ship.x / BLOCK_SIZE), gridY = Math.floor(ship.y / BLOCK_SIZE);
     const tangentX = -Math.sin(oldAngle) * ship.sweepDirection;
     const tangentY = Math.cos(oldAngle) * ship.sweepDirection;
     if (!nearest || ship.sensorTimer <= 0) {
     nearest = null;
+    const ownedNearby = [...this.frontier.values()].some(target => this.owns(ship,target.gx,target.gy) &&
+      this.inRange(ship,target.gx,target.gy,140) && this.visible(ship,target.gx,target.gy,world));
+    ship.helpingNeighbor = !ownedNearby && ship.wedgeSpan < TAU && ship.helpCooldown <= 0;
+    if (!ship.helpingNeighbor) ship.helpTime = 0;
     for (const { gx: x, gy: y } of this.frontier.values()) {
       if (world.isMined(x, y)) continue;
       const wx = (x + 0.5) * BLOCK_SIZE, wy = (y + 0.5) * BLOCK_SIZE;
       const distance = Math.hypot(wx - ship.x, wy - ship.y);
+      if (!ship.helpingNeighbor && !this.owns(ship,x,y)) continue;
+      if (ship.helpingNeighbor && !this.adjacent(ship,x,y)) continue;
       const reserved = claimed.has(`${x},${y}`) ? 1000 : 0;
       const score = distance - ((wx - ship.x) * tangentX + (wy - ship.y) * tangentY) / Math.max(1, distance) * 28 +
         reserved + this.islandPenalty(world, x, y);
@@ -191,6 +240,20 @@ export class RingMiningEngine {
       goalX = nearest.x + Math.cos(fromRock + sway) * standOff + tangentX * 14;
       goalY = nearest.y + Math.sin(fromRock + sway) * standOff + tangentY * 14;
 
+    }
+    if (ship.wedgeSpan < TAU && !ship.helpingNeighbor) {
+      const goalAngle = Math.atan2(goalY - CENTER, goalX - CENTER);
+      const offset = ((goalAngle - ship.wedgeStart) % TAU + TAU) % TAU;
+      const margin = Math.min(0.04, ship.wedgeSpan * 0.04);
+      if (offset > ship.wedgeSpan - margin || offset < margin) {
+        const toStart = Math.abs(Math.atan2(Math.sin(goalAngle - ship.wedgeStart), Math.cos(goalAngle - ship.wedgeStart)));
+        const end = ship.wedgeStart + ship.wedgeSpan;
+        const toEnd = Math.abs(Math.atan2(Math.sin(goalAngle - end), Math.cos(goalAngle - end)));
+        const bounded = toStart < toEnd ? ship.wedgeStart + margin : end - margin;
+        const goalRadius = Math.hypot(goalX - CENTER, goalY - CENTER);
+        goalX = CENTER + Math.cos(bounded) * goalRadius;
+        goalY = CENTER + Math.sin(bounded) * goalRadius;
+      }
     }
     const dx = goalX - ship.x;
     const dy = goalY - ship.y;
