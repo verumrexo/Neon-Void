@@ -19,6 +19,8 @@ export interface ShipPhysicsState {
   miningTarget: MiningTarget | null;
   miningTargets: MiningTarget[];
   sweepDirection: 1 | -1;
+  /** Per-ship laser multiplier (0 for Rocket Frigates). */
+  laserScale?: number;
 }
 export const SHIP_RADIUS = 10;
 const TAU = Math.PI * 2;
@@ -42,7 +44,7 @@ export class RingMiningEngine {
   public reset() { this.ring = 1; this.sector = -1; }
 
   public update(ships: ShipPhysicsState[], world: AsteroidWorld, dt: number,
-    dps: number, range: number, beams: number, speedMultiplier: number): BlockData[] {
+    dps: number, range: number, beams: number, speedMultiplier: number, oreBonus = 1): BlockData[] {
     if (this.sector !== world.sectorEpoch) {
       // Only a reset/load changes the sector. Mining and recoloring never reset flight.
       this.sector = world.sectorEpoch;
@@ -82,10 +84,11 @@ export class RingMiningEngine {
         ship.sensorTimer = 0.12;
       } else ship.miningTargets = retained.slice(0, beams);
       for (const target of ship.miningTargets) claimed.add(`${target.gx},${target.gy}`);
-      const beamDps = dps / Math.max(1, ship.miningTargets.length * 0.75);
+      const beamDps = dps * (ship.laserScale ?? 1) / Math.max(1, ship.miningTargets.length * 0.75);
       for (const target of ship.miningTargets) {
         if (world.isMined(target.gx, target.gy)) continue;
-        const result = world.damageBlock(target.gx, target.gy, beamDps * dt);
+        const veinBonus = oreBonus !== 1 && world.getBlock(target.gx, target.gy)?.type !== 'basalt' ? oreBonus : 1;
+        const result = world.damageBlock(target.gx, target.gy, beamDps * veinBonus * dt);
         if (result.destroyed) {
           destroyed.push(result.block);
           this.frontier.delete(`${target.gx},${target.gy}`);

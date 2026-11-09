@@ -1,4 +1,5 @@
 import { BlockData, ResourceType, RESOURCE_DEFINITIONS } from '../types/game';
+import type { AsteroidType } from '../game/content';
 
 export const CHUNK_SIZE = 16;
 export const BLOCK_SIZE = 26; // pixels per grid block
@@ -36,6 +37,18 @@ export class AsteroidWorld {
   public sectorEpoch = 0;
   public rareBoost = 0;
   public oreDepthFactor = 1;
+  /** Volatile crystals and armored cores. Off by default so terrain stays deterministic in tests. */
+  public features = false;
+  public asteroidType: AsteroidType = 'standard';
+  /** Hollow asteroids contain pre-carved caverns that count as open space. */
+  public isCavern(gx: number, gy: number): boolean {
+    if (this.asteroidType !== 'hollow') return false;
+    const cell = 6, cx = Math.floor(gx / cell), cy = Math.floor(gy / cell);
+    if (hash2D(cx + 777, cy - 313) < 0.82) return false;
+    const centerX = cx * cell + 3, centerY = cy * cell + 3;
+    if (Math.hypot(centerX, centerY) < 9) return false;
+    return Math.hypot(gx - centerX, gy - centerY) < 1.6 + hash2D(cx, cy) * 1.4;
+  }
   private chunkVersions = new Map<number, Map<string, number>>();
 
   public getChunkVersion(cx: number, cy: number, detail = 1): number {
@@ -113,7 +126,7 @@ export class AsteroidWorld {
    * Checks if a grid block has been mined (is empty void).
    */
   public isMined(gx: number, gy: number): boolean {
-    return this.minedBlocks.has(`${gx},${gy}`);
+    return this.minedBlocks.has(`${gx},${gy}`) || (this.asteroidType === 'hollow' && this.isCavern(gx, gy));
   }
 
   /**
@@ -166,7 +179,7 @@ export class AsteroidWorld {
       // Small quartz deposits near spawn, more frequent farther out.
       type = 'quartz';
       baseHp = 25;
-    } else if (commonRoll > 0.70) {
+    } else if (commonRoll > (this.asteroidType === 'metallic' ? 0.25 : 0.70)) {
       type = 'iron';
       baseHp = 14;
     } else {
@@ -175,6 +188,13 @@ export class AsteroidWorld {
     }
 
     const ring = getRingNumber(gx, gy);
+    let volatile = false, armored = false;
+    if (this.features) {
+      if (this.asteroidType === 'ice') baseHp *= 0.6;
+      volatile = dist > 6 && hash2D(gx + 5101, gy - 3301) < (this.asteroidType === 'volatile' ? 0.07 : 0.014);
+      armored = !volatile && dist > 10 && hash2D(gx - 919, gy + 4447) < (this.asteroidType === 'hollow' ? 0.008 : 0.003);
+      if (armored) baseHp *= 25;
+    }
     baseHp = Math.ceil(baseHp * getRingHardness(ring));
     const def = RESOURCE_DEFINITIONS[type];
     const currentHp = Math.min(baseHp, this.damagedBlocks.get(key) ?? baseHp);
@@ -187,6 +207,8 @@ export class AsteroidWorld {
       maxHp: baseHp,
       color: def.color,
       glow: def.glow,
+      ...(volatile ? { volatile } : {}),
+      ...(armored ? { armored } : {}),
     };
   }
 

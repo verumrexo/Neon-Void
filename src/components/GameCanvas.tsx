@@ -3,6 +3,8 @@ import { useGame } from '../state/gameContext';
 import { BLOCK_SIZE, CHUNK_SIZE, getRingNumber, getDepthBand, getDepthColor } from '../engine/world';
 import { gameFrames } from '../engine/frameClock';
 import { particleSystem } from '../engine/particles';
+import { combat } from '../engine/weapons';
+import { WING_ROLES } from '../game/content';
 
 export const GameCanvas: React.FC = () => {
   const fpsRef = useRef<HTMLDivElement | null>(null);
@@ -13,12 +15,39 @@ export const GameCanvas: React.FC = () => {
     world,
     ship,
     drones,
-    craftingItems,
+    hull,
+    loadout,
     ringProgress,
   } = useGame();
 
-  const sceneRef = useRef({ ship, drones, craftingItems });
-  sceneRef.current = { ship, drones, craftingItems };
+  const hasCore = hull.placed.some(module => module.id === 'core');
+  const sceneRef = useRef({ ship, drones, hasCore, laserOn: loadout.laserDps > 0, roles: loadout.config.roles });
+  sceneRef.current = { ship, drones, hasCore, laserOn: loadout.laserDps > 0, roles: loadout.config.roles };
+  const viewRef = useRef({ camX: 0, camY: 0, zoom: 1, halfW: 0, halfH: 0 });
+
+  // Pointer aiming: press to start loading a salvo, release to fire at the cursor.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const toWorld = (event: PointerEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      const view = viewRef.current;
+      return { x: (event.clientX - rect.left - view.halfW) / view.zoom + view.camX, y: (event.clientY - rect.top - view.halfH) / view.zoom + view.camY };
+    };
+    const down = (event: PointerEvent) => { const point = toWorld(event); combat.beginCharge(point.x, point.y); canvas.setPointerCapture(event.pointerId); };
+    const move = (event: PointerEvent) => { if (combat.isCharging) { const point = toWorld(event); combat.moveCharge(point.x, point.y); } };
+    const up = () => combat.releaseCharge(sceneRef.current.ship);
+    canvas.addEventListener('pointerdown', down);
+    canvas.addEventListener('pointermove', move);
+    canvas.addEventListener('pointerup', up);
+    canvas.addEventListener('pointercancel', up);
+    return () => {
+      canvas.removeEventListener('pointerdown', down);
+      canvas.removeEventListener('pointermove', move);
+      canvas.removeEventListener('pointerup', up);
+      canvas.removeEventListener('pointercancel', up);
+    };
+  }, []);
 
   // Camera coordinates and zoom (world space)
   const cameraRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -72,7 +101,7 @@ export const GameCanvas: React.FC = () => {
     let renderScale = Math.min(1.25, window.devicePixelRatio || 1);
     let slowSamples = 0;
     const render = (frameTime: number, alpha: number, elapsed: number) => {
-      const { ship: mainShip, drones: companions, craftingItems } = sceneRef.current;
+      const { ship: mainShip, drones: companions, hasCore, laserOn, roles } = sceneRef.current;
       const fleet = [mainShip, ...companions].map(state => ({ ...state,
         x: state.previousX + (state.x - state.previousX) * alpha,
         y: state.previousY + (state.y - state.previousY) * alpha,
@@ -146,10 +175,13 @@ export const GameCanvas: React.FC = () => {
       const desiredZoom = Math.min(fleetZoom, width / (extentX * 2), height / (extentY * 2));
       zoomRef.current = Math.min(desiredZoom, zoomRef.current + (desiredZoom - zoomRef.current) * (1 - Math.exp(-3 * elapsed)));
       const zoom = zoomRef.current;
-      const camX = cameraRef.current.x;
-      const camY = cameraRef.current.y;
       const halfW = width / 2;
       const halfH = height / 2;
+      viewRef.current = { camX: cameraRef.current.x, camY: cameraRef.current.y, zoom, halfW, halfH };
+      // Screen shake from explosions is applied to the render camera only.
+      const shake = combat.shake;
+      const camX = cameraRef.current.x + (shake ? (Math.random() - 0.5) * shake : 0);
+      const camY = cameraRef.current.y + (shake ? (Math.random() - 0.5) * shake : 0);
 
       // Clear with deep cosmic void background
       ctx.fillStyle = '#050508';
@@ -160,6 +192,31 @@ export const GameCanvas: React.FC = () => {
       ctx.translate(halfW, halfH);
       ctx.scale(zoom, zoom);
       ctx.translate(-camX, -camY);
+      const time = frameTime / 1000;
+      // Collapse vortex: the core pulls light inward while the bomb burns.
+      if (combat.collapse > 0) {
+        const progress = 1 - combat.collapse / 30;
+        const cx = BLOCK_SIZE / 2, cy = BLOCK_SIZE / 2;
+        const radius = 60 + progress * 120;
+        const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius * 3);
+        gradient.addColorStop(0, 'rgba(192,132,252,0.55)');
+        gradient.addColorStop(0.25, 'rgba(124,92,255,0.18)');
+        gradient.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = gradient;
+        ctx.beginPath(); ctx.arc(cx, cy, radius * 3, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = 'rgba(192,132,252,0.5)';
+        ctx.lineWidth = 1.5;
+        for (let arm = 0; arm < 5; arm++) {
+          ctx.beginPath();
+          for (let t = 0; t < 1; t += 0.04) {
+            const angle = arm * Math.PI * 2 / 5 + t * 5 - time * (1.5 + progress * 3);
+            const r = radius * 3 * (1 - t);
+            const x = cx + Math.cos(angle) * r, y = cy + Math.sin(angle) * r;
+            if (t === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+        }
+      }
 
       // Calculate visible block bounds taking zoom into account
       const viewRadiusW = halfW / zoom + BLOCK_SIZE * 2;
@@ -218,7 +275,7 @@ export const GameCanvas: React.FC = () => {
 
           const ring = getRingNumber(sourceX, sourceY);
           const band = getDepthBand(ring);
-          const tileKey = `${block.type}:${isSurface}:${band % 6}:${Math.min(4, 1 + Math.floor(band / 6))}`;
+          const tileKey = `${block.type}:${isSurface}:${band % 6}:${Math.min(4, 1 + Math.floor(band / 6))}:${block.volatile ? 'v' : block.armored ? 'a' : ''}`;
           let tile = tiles.get(tileKey);
           if (!tile) {
             tile = document.createElement('canvas');
@@ -335,6 +392,24 @@ export const GameCanvas: React.FC = () => {
               const marks = Math.min(4, 1 + Math.floor(band / 6));
               for (let mark = 0; mark < marks; mark++) ctx.fillRect(4 + mark * 3, 4, 1, 3);
             }
+            if (block.volatile) {
+              // Volatile crystal: red hazard core that explodes when broken.
+              ctx.fillStyle = '#ff3b1f';
+              ctx.shadowColor = 'rgba(255,59,31,0.9)'; ctx.shadowBlur = 8;
+              ctx.beginPath();
+              ctx.moveTo(BLOCK_SIZE / 2, 4); ctx.lineTo(BLOCK_SIZE - 5, BLOCK_SIZE - 6); ctx.lineTo(5, BLOCK_SIZE - 6); ctx.closePath();
+              ctx.fill();
+              ctx.shadowBlur = 0;
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect(BLOCK_SIZE / 2 - 1, 9, 2, 6); ctx.fillRect(BLOCK_SIZE / 2 - 1, 17, 2, 2);
+            } else if (block.armored) {
+              // Armored core: heavy plating with rivets.
+              ctx.strokeStyle = '#ffb800'; ctx.lineWidth = 3;
+              ctx.strokeRect(2, 2, BLOCK_SIZE - 5, BLOCK_SIZE - 5);
+              ctx.fillStyle = '#ffb800';
+              for (const [rx, ry] of [[5, 5], [BLOCK_SIZE - 7, 5], [5, BLOCK_SIZE - 7], [BLOCK_SIZE - 7, BLOCK_SIZE - 7]]) ctx.fillRect(rx - 1, ry - 1, 3, 3);
+              ctx.beginPath(); ctx.arc(BLOCK_SIZE / 2, BLOCK_SIZE / 2, 4, 0, Math.PI * 2); ctx.fill();
+            }
             tiles.set(tileKey, tile);
           }
           ctx.drawImage(tile, bx - 12 * detail, by - 12 * detail, tile.width * detail, tile.height * detail);
@@ -367,7 +442,7 @@ export const GameCanvas: React.FC = () => {
         ? ship.miningTargets
         : ship.miningTarget ? [ship.miningTarget] : [];
 
-      targetsToDraw.forEach((target) => {
+      if (laserOn) targetsToDraw.forEach((target) => {
         const tx = target.gx * BLOCK_SIZE + BLOCK_SIZE / 2;
         const ty = target.gy * BLOCK_SIZE + BLOCK_SIZE / 2;
 
@@ -401,6 +476,73 @@ export const GameCanvas: React.FC = () => {
         ctx.restore();
       });
 
+      // 4. Combat effects
+      for (const fire of combat.fires) {
+        ctx.fillStyle = `rgba(255,${100 + Math.floor(Math.random() * 80)},20,${0.25 + Math.random() * 0.25})`;
+        ctx.fillRect(fire.gx * BLOCK_SIZE + 2, fire.gy * BLOCK_SIZE + 2, BLOCK_SIZE - 4, BLOCK_SIZE - 4);
+      }
+      for (const well of combat.wells) {
+        const t = well.life / well.max;
+        ctx.fillStyle = 'rgba(10,0,30,0.85)';
+        ctx.beginPath(); ctx.arc(well.x, well.y, 5 + (1 - t) * 4, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = `rgba(167,139,250,${0.4 + 0.4 * Math.sin(time * 20)})`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(well.x, well.y, well.r * (0.3 + t * 0.7), 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      for (const blast of combat.blasts) {
+        const t = 1 - blast.life / blast.max;
+        ctx.globalAlpha = (1 - t) * 0.8;
+        ctx.fillStyle = blast.color;
+        ctx.beginPath(); ctx.arc(blast.x, blast.y, blast.r * (0.4 + t * 0.6), 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1 - t;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(blast.x, blast.y, blast.r * (0.6 + t * 0.8), 0, Math.PI * 2); ctx.stroke();
+      }
+      for (const line of combat.lines) {
+        ctx.globalAlpha = line.life / line.max;
+        for (const [width, color] of [[line.width * 2.5, line.color], [line.width * 0.6, '#ffffff']] as const) {
+          ctx.strokeStyle = color; ctx.lineWidth = width;
+          ctx.beginPath();
+          line.points.forEach((point, index) => index ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y));
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+      for (const rocket of combat.rockets) {
+        const angle = Math.atan2(rocket.vy, rocket.vx);
+        ctx.save();
+        ctx.translate(rocket.x, rocket.y); ctx.rotate(angle);
+        const size = rocket.small ? 0.6 : 1;
+        ctx.fillStyle = '#ffb070';
+        ctx.fillRect(-7 * size - Math.random() * 4, -1.5 * size, 4 * size, 3 * size);
+        ctx.fillStyle = rocket.manual ? '#ffffff' : '#ff6a2a';
+        ctx.beginPath(); ctx.moveTo(5 * size, 0); ctx.lineTo(-4 * size, -2.5 * size); ctx.lineTo(-4 * size, 2.5 * size); ctx.closePath(); ctx.fill();
+        ctx.restore();
+      }
+      if (combat.rival) {
+        const rival = combat.rival;
+        ctx.save();
+        ctx.translate(rival.x, rival.y); ctx.rotate(rival.angle);
+        ctx.strokeStyle = '#ff3366'; ctx.fillStyle = '#1a0008'; ctx.lineWidth = 1.8;
+        ctx.beginPath(); ctx.moveTo(14, 0); ctx.lineTo(-8, -9); ctx.lineTo(-3, 0); ctx.lineTo(-8, 9); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.restore();
+        ctx.strokeStyle = 'rgba(255,51,102,0.8)'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(rival.x, rival.y); ctx.lineTo(rival.tx, rival.ty); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(rival.x - 14, rival.y - 18, 28, 3);
+        ctx.fillStyle = '#ff3366'; ctx.fillRect(rival.x - 14, rival.y - 18, 28 * Math.max(0, rival.hp / rival.maxHp), 3);
+      }
+      if (combat.isCharging && combat.chargeTarget) {
+        const target = combat.chargeTarget;
+        const charge = combat.manualCharge / 1.5;
+        ctx.strokeStyle = combat.manualCooldown > 0 ? 'rgba(255,255,255,0.3)' : '#ff6a2a';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(target.x, target.y, 12 + charge * 16, 0, Math.PI * 2 * Math.max(0.05, charge)); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(target.x - 6, target.y); ctx.lineTo(target.x + 6, target.y); ctx.moveTo(target.x, target.y - 6); ctx.lineTo(target.x, target.y + 6); ctx.stroke();
+      }
+
       // 5. Draw Particles and Floating Numbers
       particleSystem.render(ctx);
 
@@ -412,7 +554,7 @@ export const GameCanvas: React.FC = () => {
       }
 
       for (const fleetShip of [ship, ...drones]) {
-        if (fleetShip !== ship) {
+        if (fleetShip !== ship && laserOn && fleetShip.laserScale !== 0) {
           for (const target of fleetShip.miningTargets) {
             if (world.isMined(target.gx, target.gy)) continue;
             ctx.strokeStyle = target.color;
@@ -439,9 +581,13 @@ export const GameCanvas: React.FC = () => {
       ctx.lineTo(-9 - thrusterLength, 0);
       ctx.stroke();
 
-      const hasVanguard = craftingItems.some((c) => c.id === 'vanguard_hull' && c.crafted);
-
-      if (hasVanguard) {
+      const role = fleetShip === ship ? null : roles[drones.indexOf(fleetShip)];
+      if (role) {
+        ctx.strokeStyle = WING_ROLES[role].color;
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(0, 0, 14, 0, Math.PI * 2); ctx.globalAlpha = 0.35; ctx.stroke(); ctx.globalAlpha = 1;
+      }
+      if (fleetShip === ship && hasCore) {
         // Advanced Vanguard Multi-Vectored Hull
         ctx.strokeStyle = '#ffffff';
         ctx.fillStyle = '#050508';
@@ -507,7 +653,7 @@ export const GameCanvas: React.FC = () => {
       </div>
       <canvas
         ref={canvasRef}
-        className="w-full h-full block touch-none"
+        className="w-full h-full block touch-none cursor-crosshair"
       />
     </div>
   );

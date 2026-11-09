@@ -4,12 +4,13 @@ import { RESOURCE_DEFINITIONS, ResourceType } from '../types/game';
 import { Sparkles, Activity, Maximize } from 'lucide-react';
 
 interface TopBarProps {
-  activeTab: 'upgrades' | 'crafting' | 'quantum' | 'stats' | null;
-  setActiveTab: (tab: 'upgrades' | 'crafting' | 'quantum' | 'stats') => void;
+  activeTab: 'upgrades' | 'crafting' | 'gear' | 'quantum' | 'stats' | null;
+  setActiveTab: (tab: 'upgrades' | 'crafting' | 'gear' | 'quantum' | 'stats') => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({ activeTab, setActiveTab }) => {
-  const { resources, currentDps, availableStardustOnPrestige } = useGame();
+  const { resources, currentDps, availableStardustOnPrestige: stardustGain, ringProgress, collapseActive } = useGame();
+  const availableStardustOnPrestige = ringProgress.ring >= 6 || collapseActive ? stardustGain : 0;
   const primaryResources: ResourceType[] = ['basalt', 'iron', 'quartz', 'emeraldite', 'voidOre', 'sunstone'];
 
   return (
@@ -41,7 +42,7 @@ export const TopBar: React.FC<TopBarProps> = ({ activeTab, setActiveTab }) => {
                 : 'text-white/70 hover:text-white hover:bg-white/5'
             }`}
           >
-            Upgrades <kbd>1</kbd>
+            Arsenal <kbd>1</kbd>
           </button>
           <button
             onClick={() => setActiveTab('crafting')}
@@ -51,7 +52,17 @@ export const TopBar: React.FC<TopBarProps> = ({ activeTab, setActiveTab }) => {
                 : 'text-white/70 hover:text-white hover:bg-white/5'
             }`}
           >
-            Crafting <kbd>2</kbd>
+            Hull <kbd>2</kbd>
+          </button>
+          <button
+            onClick={() => setActiveTab('gear')}
+            className={`px-3 py-1 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
+              activeTab === 'gear'
+                ? 'bg-white text-black font-semibold shadow-sm'
+                : 'text-white/70 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            Gear <kbd>3</kbd>
           </button>
           <button
             onClick={() => setActiveTab('quantum')}
@@ -72,7 +83,7 @@ export const TopBar: React.FC<TopBarProps> = ({ activeTab, setActiveTab }) => {
                 : 'text-white/70 hover:text-white hover:bg-white/5'
             }`}
           >
-            Stats <kbd>4</kbd>
+            Stats <kbd>5</kbd>
           </button>
         </nav>
 

@@ -85,6 +85,10 @@ export interface BlockData {
   color: string;
   glow: string;
   mined?: boolean;
+  /** Explodes when destroyed. */
+  volatile?: boolean;
+  /** Heavily armored jackpot core. */
+  armored?: boolean;
 }
 
 export interface FleetShip extends ShipPhysicsState {

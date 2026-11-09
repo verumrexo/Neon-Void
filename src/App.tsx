@@ -7,21 +7,24 @@ import React, { useState, useEffect } from 'react';
 import { GameProvider, useGame } from './state/gameContext';
 import { GameCanvas } from './components/GameCanvas';
 import { TopBar } from './components/TopBar';
-import { UpgradePanel } from './components/UpgradePanel';
-import { CraftingPanel } from './components/CraftingPanel';
-import { QuantumTree } from './components/QuantumTree';
+import { ArsenalPanel } from './components/ArsenalPanel';
+import { HullPanel } from './components/HullPanel';
+import { GearPanel } from './components/GearPanel';
+import { SingularityPanel, CollapseModal } from './components/SingularityPanel';
+import { HudOverlay } from './components/HudOverlay';
 import { StatsPanel } from './components/StatsPanel';
-import { X, Sparkles, ChevronDown, ChevronUp, Zap, Wrench, BarChart2 } from 'lucide-react';
+import { X, Sparkles, ChevronDown, ChevronUp, Zap, Wrench, Shield, BarChart2 } from 'lucide-react';
 import { RESOURCE_DEFINITIONS, ResourceType } from './types/game';
 
-type ActiveTab = 'upgrades' | 'crafting' | 'quantum' | 'stats' | null;
+type ActiveTab = 'upgrades' | 'crafting' | 'gear' | 'quantum' | 'stats' | null;
 
 const MainContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => window.innerWidth >= 1024 ? 'upgrades' : null);
   const [isDrawerCollapsed, setIsDrawerCollapsed] = useState<boolean>(false);
-  const { offlineEarnings, clearOfflineNotification, availableStardustOnPrestige, drones, currentDps, ringProgress } = useGame();
+  const { offlineEarnings, clearOfflineNotification, drones, currentDps, ringProgress, collapseActive, collapseChoice } = useGame();
+  const availableStardustOnPrestige = ringProgress.ring >= 6 || collapseActive || collapseChoice ? 1 : 0;
 
-  const handleTabSelect = (tab: 'upgrades' | 'crafting' | 'quantum' | 'stats') => {
+  const handleTabSelect = (tab: 'upgrades' | 'crafting' | 'gear' | 'quantum' | 'stats') => {
     if (activeTab === tab && !isDrawerCollapsed) {
       // Toggle collapse if clicking the same active tab
       setActiveTab(null);
@@ -47,7 +50,7 @@ const MainContent: React.FC = () => {
     const onKey = (event: KeyboardEvent) => {
       if (event.repeat || event.ctrlKey || event.metaKey || event.altKey ||
           (event.target instanceof HTMLElement && /INPUT|TEXTAREA|SELECT/.test(event.target.tagName))) return;
-      const tabs = ['upgrades', 'crafting', 'quantum', 'stats'] as const;
+      const tabs = ['upgrades', 'crafting', 'gear', 'quantum', 'stats'] as const;
       const index = Number(event.key) - 1;
       if (index >= 0 && index < tabs.length) {
         setActiveTab(current => current === tabs[index] ? null : tabs[index]);
@@ -79,13 +82,14 @@ const MainContent: React.FC = () => {
         {/* Fullscreen Interactive Game Canvas */}
         <div className="flight-viewport relative flex-1 w-full h-full pb-14 md:pb-0">
           <GameCanvas />
+          <HudOverlay />
           <div className="flight-label hidden md:flex"><span className="status-dot" /> mining sector <span className="text-white/30">/ live</span></div>
           <div className="flight-status hidden md:flex">
             <span><b>{drones.length + 1}</b> ships online</span>
             <span><b>{currentDps}</b> dps / ship</span>
-            <span className="ml-auto">ring {ringProgress.ring} · auto mining</span>
+            <span className="ml-auto">ring {ringProgress.ring} · click/tap rock to fire rockets</span>
           </div>
-          <div className="flight-help hidden md:flex"><span>automatic <b>circular foraging</b></span><span>cargo <b>instant collection</b></span><span>tab <b>toggle panel</b></span></div>
+          <div className="flight-help hidden md:flex"><span>click/hold <b>aim rocket salvo</b></span><span>1-4 <b>panels</b></span><span>tab <b>toggle panel</b></span></div>
         </div>
 
         {/* Offline Earnings Toast */}
@@ -154,8 +158,9 @@ const MainContent: React.FC = () => {
                 <div className="flex items-center gap-2.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-[#00f0ff]" />
                   <span className="text-xs font-bold tracking-wider uppercase text-white/90 font-mono">
-                    {activeTab === 'upgrades' && 'ship systems'}
-                    {activeTab === 'crafting' && 'crafting bay'}
+                    {activeTab === 'upgrades' && 'arsenal'}
+                    {activeTab === 'crafting' && 'hull modules'}
+                    {activeTab === 'gear' && 'equipment bay'}
                     {activeTab === 'quantum' && 'singularity'}
                     {activeTab === 'stats' && 'mission telemetry'}
                   </span>
@@ -187,17 +192,20 @@ const MainContent: React.FC = () => {
             {/* Scrollable Drawer Content */}
             {!isDrawerCollapsed && (
               <div className="system-panel-content flex-1 overflow-y-auto overflow-x-hidden p-2 md:p-4">
-                {activeTab === 'upgrades' && <UpgradePanel />}
-                {activeTab === 'crafting' && <CraftingPanel />}
-                {activeTab === 'quantum' && <QuantumTree />}
+                {activeTab === 'upgrades' && <ArsenalPanel />}
+                {activeTab === 'crafting' && <HullPanel />}
+                {activeTab === 'gear' && <GearPanel />}
+                {activeTab === 'quantum' && <SingularityPanel />}
                 {activeTab === 'stats' && <StatsPanel />}
               </div>
             )}
           </div>
         )}
 
+        <CollapseModal />
+
         {/* Mobile Ergonomic Bottom Tab Navigation Dock (Native App Feel on Phones) */}
-        <nav className="mobile-dock flex md:hidden absolute bottom-0 inset-x-0 h-14 z-40 bg-[#06080e]/95 border-t border-white/10 backdrop-blur-xl grid grid-cols-4 items-center px-1">
+        <nav className="mobile-dock flex md:hidden absolute bottom-0 inset-x-0 h-14 z-40 bg-[#06080e]/95 border-t border-white/10 backdrop-blur-xl grid grid-cols-5 items-center px-1">
           <button
             onClick={() => handleTabSelect('upgrades')}
             className={`flex flex-col items-center justify-center h-full gap-1 transition-colors ${
@@ -205,7 +213,7 @@ const MainContent: React.FC = () => {
             }`}
           >
             <Zap className="w-4 h-4" />
-            <span className="text-[10px] font-semibold tracking-tight">Upgrades</span>
+            <span className="text-[9px] font-semibold tracking-tight">Arsenal</span>
           </button>
 
           <button
@@ -215,7 +223,17 @@ const MainContent: React.FC = () => {
             }`}
           >
             <Wrench className="w-4 h-4" />
-            <span className="text-[10px] font-semibold tracking-tight">Crafting</span>
+            <span className="text-[9px] font-semibold tracking-tight">Hull</span>
+          </button>
+
+          <button
+            onClick={() => handleTabSelect('gear')}
+            className={`flex flex-col items-center justify-center h-full gap-1 transition-colors ${
+              activeTab === 'gear' ? 'text-[#38bdf8]' : 'text-white/50 hover:text-white/80'
+            }`}
+          >
+            <Shield className="w-4 h-4" />
+            <span className="text-[9px] font-semibold tracking-tight">Gear</span>
           </button>
 
           <button
@@ -225,9 +243,9 @@ const MainContent: React.FC = () => {
             }`}
           >
             <Sparkles className="w-4 h-4" />
-            <span className="text-[10px] font-semibold tracking-tight">Singularity</span>
+            <span className="text-[9px] font-semibold tracking-tight">Singularity</span>
             {availableStardustOnPrestige > 0 && (
-              <span className="absolute top-1.5 right-4 w-2 h-2 rounded-full bg-[#c084fc] shadow-[0_0_6px_#c084fc] animate-ping" />
+              <span className="absolute top-1.5 right-2 w-2 h-2 rounded-full bg-[#c084fc] shadow-[0_0_6px_#c084fc] animate-ping" />
             )}
           </button>
 
@@ -238,7 +256,7 @@ const MainContent: React.FC = () => {
             }`}
           >
             <BarChart2 className="w-4 h-4" />
-            <span className="text-[10px] font-semibold tracking-tight">Stats</span>
+            <span className="text-[9px] font-semibold tracking-tight">Stats</span>
           </button>
         </nav>
       </div>
